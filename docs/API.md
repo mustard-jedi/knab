@@ -36,6 +36,7 @@ no nested objects, no IDs, and amounts are never negative.
 | `payee` | string | no | Who was paid, or who paid |
 | `memo` | string | no | Free-text note |
 | `cleared` | boolean | no | `true` if settled at the bank. Defaults to `false` |
+| `flag` | string | no | Name of a coloured flag from `GET /flags`. Not case-sensitive. An empty string removes the flag |
 
 Any other field is rejected.
 
@@ -55,7 +56,8 @@ Any other field is rejected.
     "category": { "type": "string" },
     "payee": { "type": "string", "maxLength": 200 },
     "memo": { "type": "string", "maxLength": 500 },
-    "cleared": { "type": "boolean" }
+    "cleared": { "type": "boolean" },
+    "flag": { "type": "string" }
   }
 }
 ```
@@ -109,6 +111,7 @@ wrong, the valid names are included so the caller can retry:
 |---|---|
 | `validation_error` | Missing field, unknown field, wrong type, or `type` not `expense`/`income` |
 | `unknown_account` | No account with that name (see `valid_accounts`) |
+| `unknown_flag` | No flag with that name (see `valid_flags`) |
 | `unknown_category` | No category with that name (see `valid_categories`) |
 | `category_required` | An expense was sent without a category (see `valid_categories`) |
 | `invalid_amount` | More than 2 decimal places |
@@ -137,7 +140,10 @@ Do not add any other fields.
 |---|---|
 | `GET /accounts` | Accounts with balances |
 | `GET /categories` | Category groups and categories |
-| `GET /transactions?account=&category=&from=&to=&q=&limit=&offset=` | List transactions, newest first |
+| `GET /transactions?account=&category=&flag=&from=&to=&q=&limit=&offset=` | List transactions, newest first |
+| `GET /flags` | Flags with their colour and how many transactions use each |
+| `POST /flags` | `{"name": "To reimburse", "color": "teal"}`. Colours: red, orange, yellow, green, blue, purple, pink, teal, gray |
+| `PATCH /flags/{id}`, `DELETE /flags/{id}` | Rename or recolour a flag; remove it (its transactions become unflagged) |
 | `PATCH /transactions/{id}` | Change a transaction (send only the fields to change) |
 | `DELETE /transactions/{id}` | Delete a transaction |
 | `POST /transfers` | Move money: `{"amount": 100, "from_account": "Checking", "to_account": "Savings"}` |

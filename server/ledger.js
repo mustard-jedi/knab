@@ -30,6 +30,21 @@ export function findCategory(db, budgetId, name) {
   );
 }
 
+export function findFlag(db, budgetId, name) {
+  const row = db.prepare('SELECT * FROM flags WHERE budget_id = ? AND name = ?').get(budgetId, String(name).trim());
+  if (row) return row;
+  const valid = db.prepare('SELECT name FROM flags WHERE budget_id = ? ORDER BY sort, id').all(budgetId).map((r) => r.name);
+  throw new HttpError(
+    400,
+    'unknown_flag',
+    `There is no flag named "${name}". Valid flags: ${valid.join(', ') || '(none yet)'}. Leave "flag" out for no flag.`,
+    { field: 'flag', valid_flags: valid },
+  );
+}
+
+// undefined = not sent; empty string = no flag.
+const flagIdOf = (db, budgetId, flag) => (flag && flag.trim() ? findFlag(db, budgetId, flag).id : null);
+
 function categoryRequired(db, budgetId) {
   const valid = validCategories(db, budgetId);
   return new HttpError(
@@ -42,11 +57,13 @@ function categoryRequired(db, budgetId) {
 
 const TX_SELECT = `
   SELECT t.id, t.date, t.amount, t.payee, t.memo, t.cleared, t.opening, t.transfer_id, t.recurring_id,
-         a.name AS account, c.name AS category, g.name AS category_group, ta.name AS transfer_account
+         a.name AS account, c.name AS category, g.name AS category_group, ta.name AS transfer_account,
+         f.name AS flag, f.color AS flag_color
   FROM transactions t
   JOIN accounts a ON a.id = t.account_id
   LEFT JOIN categories c ON c.id = t.category_id
   LEFT JOIN category_groups g ON g.id = c.group_id
+  LEFT JOIN flags f ON f.id = t.flag_id
   LEFT JOIN transactions tt ON tt.id = t.transfer_id
   LEFT JOIN accounts ta ON ta.id = tt.account_id`;
 
@@ -66,6 +83,8 @@ export function txShape(row) {
     payee: row.payee,
     memo: row.memo,
     cleared: Boolean(row.cleared),
+    flag: row.flag ?? null,
+    flag_color: row.flag_color ?? null,
     transfer_account: row.transfer_account ?? null,
     opening_balance: Boolean(row.opening),
     recurring_id: row.recurring_id ?? null,
@@ -99,18 +118,19 @@ export function resolveEntry(db, budgetId, body) {
 }
 
 const INSERT_TX = `
-  INSERT INTO transactions (budget_id, account_id, date, amount, payee, category_id, memo, cleared, opening, recurring_id, created_by)
-  VALUES (@budget_id, @account_id, @date, @amount, @payee, @category_id, @memo, @cleared, @opening, @recurring_id, @created_by)`;
+  INSERT INTO transactions (budget_id, account_id, date, amount, payee, category_id, memo, cleared, opening, recurring_id, created_by, flag_id)
+  VALUES (@budget_id, @account_id, @date, @amount, @payee, @category_id, @memo, @cleared, @opening, @recurring_id, @created_by, @flag_id)`;
 
 export function insertTransaction(db, row) {
   return db.prepare(INSERT_TX).run({
-    payee: '', memo: '', category_id: null, cleared: 0, opening: 0, recurring_id: null, created_by: null, ...row,
+    payee: '', memo: '', category_id: null, cleared: 0, opening: 0, recurring_id: null, created_by: null, flag_id: null, ...row,
   }).lastInsertRowid;
 }
 
 export function createTransaction(db, budgetId, userId, body) {
   const entry = resolveEntry(db, budgetId, body);
-  const id = insertTransaction(db, { ...entry, budget_id: budgetId, created_by: userId });
+  const flagId = flagIdOf(db, budgetId, body.flag);
+  const id = insertTransaction(db, { ...entry, budget_id: budgetId, created_by: userId, flag_id: flagId });
   return txShape(getTransaction(db, budgetId, id));
 }
 
@@ -121,6 +141,7 @@ export function updateTransaction(db, budgetId, id, body) {
   const memo = body.memo !== undefined ? body.memo.trim() : current.memo;
   const cleared = body.cleared !== undefined ? (body.cleared ? 1 : 0) : current.cleared;
   const cents = body.amount !== undefined ? toCents(body.amount) : Math.abs(current.amount);
+  const flagId = body.flag !== undefined ? flagIdOf(db, budgetId, body.flag) : current.flag_id;
 
   if (current.transfer_id) {
     for (const field of ['type', 'account', 'category', 'payee']) {
@@ -129,8 +150,8 @@ export function updateTransaction(db, budgetId, id, body) {
       }
     }
     db.transaction(() => {
-      db.prepare('UPDATE transactions SET date = ?, memo = ?, amount = ?, cleared = ? WHERE id = ?')
-        .run(date, memo, current.amount < 0 ? -cents : cents, cleared, current.id);
+      db.prepare('UPDATE transactions SET date = ?, memo = ?, amount = ?, cleared = ?, flag_id = ? WHERE id = ?')
+        .run(date, memo, current.amount < 0 ? -cents : cents, cleared, flagId, current.id);
       db.prepare('UPDATE transactions SET date = ?, memo = ?, amount = ? WHERE id = ?')
         .run(date, memo, current.amount < 0 ? cents : -cents, current.transfer_id);
     })();
@@ -148,10 +169,10 @@ export function updateTransaction(db, budgetId, id, body) {
     throw categoryRequired(db, budgetId);
   }
   db.prepare(
-    'UPDATE transactions SET date = ?, amount = ?, account_id = ?, category_id = ?, payee = ?, memo = ?, cleared = ? WHERE id = ?',
+    'UPDATE transactions SET date = ?, amount = ?, account_id = ?, category_id = ?, payee = ?, memo = ?, cleared = ?, flag_id = ? WHERE id = ?',
   ).run(
     date, type === 'expense' ? -cents : cents, accountId, categoryId,
-    body.payee !== undefined ? body.payee.trim() : current.payee, memo, cleared, current.id,
+    body.payee !== undefined ? body.payee.trim() : current.payee, memo, cleared, flagId, current.id,
   );
   return txShape(getTransaction(db, budgetId, id));
 }
@@ -169,9 +190,10 @@ export function createTransfer(db, budgetId, userId, body) {
   const to = findAccount(db, budgetId, body.to_account, 'to_account');
   if (from.id === to.id) throw new HttpError(400, 'same_account', '"from_account" and "to_account" must be different accounts.');
   const memo = (body.memo ?? '').trim();
+  const flagId = flagIdOf(db, budgetId, body.flag);
   const outId = db.transaction(() => {
     const base = { budget_id: budgetId, date, memo, created_by: userId, payee: '' };
-    const a = insertTransaction(db, { ...base, account_id: from.id, amount: -cents });
+    const a = insertTransaction(db, { ...base, account_id: from.id, amount: -cents, flag_id: flagId });
     const b = insertTransaction(db, { ...base, account_id: to.id, amount: cents });
     db.prepare('UPDATE transactions SET transfer_id = ? WHERE id = ?').run(b, a);
     db.prepare('UPDATE transactions SET transfer_id = ? WHERE id = ?').run(a, b);

@@ -54,13 +54,19 @@ const txFields = {
   },
 };
 
+const flag = {
+  type: 'string',
+  description: 'Name of a coloured flag, as it appears in GET /api/v1/flags. Not case-sensitive. Optional. Send an empty string to remove the flag.',
+  examples: ['Red'],
+};
+
 export const transactionCreate = {
   title: 'TransactionCreate',
   description: 'Payload for POST /api/v1/transactions. Creates one expense or income transaction.',
   type: 'object',
   additionalProperties: false,
   required: ['amount', 'type', 'account'],
-  properties: txFields,
+  properties: { ...txFields, flag },
   examples: [
     { date: '2026-01-23', amount: 12.5, type: 'expense', account: 'Checking', category: 'Groceries', payee: 'Corner Market' },
     { amount: 2500, type: 'income', account: 'Checking', payee: 'Employer' },
@@ -72,7 +78,7 @@ export const transactionUpdate = {
   description: 'Payload for PATCH /api/v1/transactions/{id}. Send only the fields to change.',
   type: 'object',
   additionalProperties: false,
-  properties: txFields,
+  properties: { ...txFields, flag },
 };
 
 export const transferCreate = {
@@ -87,6 +93,7 @@ export const transferCreate = {
     from_account: { type: 'string', minLength: 1, description: 'Name of the account the money leaves.' },
     to_account: { type: 'string', minLength: 1, description: 'Name of the account the money enters.' },
     memo: txFields.memo,
+    flag,
   },
 };
 

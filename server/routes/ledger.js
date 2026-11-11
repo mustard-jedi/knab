@@ -3,10 +3,11 @@ import { resolveBudget } from '../auth.js';
 import { HttpError, toCents, fromCents, assertDate } from '../util.js';
 import * as schemas from '../schemas.js';
 import {
-  TX_SELECT, txShape, findAccount, findCategory, resolveEntry, insertTransaction,
+  TX_SELECT, txShape, findAccount, findCategory, findFlag, resolveEntry, insertTransaction,
   createTransaction, updateTransaction, deleteTransaction, createTransfer, postDueRecurring,
 } from '../ledger.js';
 import { todayStr, parseDate, nextOccurrence } from '../../shared/periods.js';
+import { FLAG_COLORS } from '../../shared/flags.js';
 
 const ACCOUNT_TYPES = ['checking', 'savings', 'cash', 'credit', 'other'];
 const security = [{ bearerAuth: [] }];
@@ -234,6 +235,69 @@ export function ledgerRoutes(app) {
     ).all(budget.id).map((r) => r.payee);
   });
 
+  // ---- Flags ----
+
+  const flagBody = {
+    name: { type: 'string', minLength: 1, maxLength: 40, description: 'Flag name, unique within the budget.' },
+    color: { type: 'string', enum: Object.keys(FLAG_COLORS), description: 'Colour of the flag.' },
+  };
+  const flagOf = (budgetId, id) => {
+    const row = db.prepare('SELECT id, name, color FROM flags WHERE id = ? AND budget_id = ?').get(id, budgetId);
+    if (!row) throw new HttpError(404, 'flag_not_found', 'No such flag.');
+    return row;
+  };
+
+  app.get('/flags', {
+    schema: { tags: ['Flags'], summary: 'Flags of the budget, with how many transactions use each', security },
+  }, async (request) => {
+    const budget = budgetOf(request);
+    return db.prepare(
+      `SELECT f.id, f.name, f.color, (SELECT COUNT(*) FROM transactions t WHERE t.flag_id = f.id) AS count
+       FROM flags f WHERE f.budget_id = ? ORDER BY f.sort, f.id`,
+    ).all(budget.id);
+  });
+
+  app.post('/flags', {
+    schema: {
+      tags: ['Flags'], summary: 'Add a flag', security,
+      body: { type: 'object', additionalProperties: false, required: ['name', 'color'], properties: flagBody },
+    },
+  }, async (request, reply) => {
+    const budget = budgetOf(request);
+    const name = request.body.name.trim();
+    if (!name) throw new HttpError(400, 'invalid_name', '"name" must not be blank.');
+    const sort = db.prepare('SELECT COALESCE(MAX(sort), -1) + 1 AS n FROM flags WHERE budget_id = ?').get(budget.id).n;
+    let id;
+    try {
+      id = db.prepare('INSERT INTO flags (budget_id, name, color, sort) VALUES (?, ?, ?, ?)').run(budget.id, name, request.body.color, sort).lastInsertRowid;
+    } catch (err) { conflict(err, `There is already a flag named "${name}".`); }
+    reply.code(201);
+    return { id, name, color: request.body.color, count: 0 };
+  });
+
+  app.patch('/flags/:id', {
+    schema: { tags: ['Flags'], summary: 'Rename or recolour a flag', security, body: { type: 'object', additionalProperties: false, properties: flagBody } },
+  }, async (request) => {
+    const budget = budgetOf(request);
+    const current = flagOf(budget.id, request.params.id);
+    const name = request.body.name !== undefined ? request.body.name.trim() : current.name;
+    if (!name) throw new HttpError(400, 'invalid_name', '"name" must not be blank.');
+    const color = request.body.color ?? current.color;
+    try {
+      db.prepare('UPDATE flags SET name = ?, color = ? WHERE id = ?').run(name, color, current.id);
+    } catch (err) { conflict(err, `There is already a flag named "${name}".`); }
+    return { id: current.id, name, color };
+  });
+
+  // Transactions that carried the flag simply lose it.
+  app.delete('/flags/:id', {
+    schema: { tags: ['Flags'], summary: 'Remove a flag; its transactions become unflagged', security },
+  }, async (request) => {
+    const budget = budgetOf(request);
+    db.prepare('DELETE FROM flags WHERE id = ?').run(flagOf(budget.id, request.params.id).id);
+    return { ok: true };
+  });
+
   // ---- Transactions ----
 
   function txFilter(budget, query) {
@@ -241,6 +305,7 @@ export function ledgerRoutes(app) {
     const params = { budget: budget.id };
     if (query.account) { where.push('t.account_id = @account'); params.account = findAccount(db, budget.id, query.account).id; }
     if (query.category) { where.push('t.category_id = @category'); params.category = findCategory(db, budget.id, query.category).id; }
+    if (query.flag) { where.push('t.flag_id = @flag'); params.flag = findFlag(db, budget.id, query.flag).id; }
     if (query.from) { where.push('t.date >= @from'); params.from = assertDate(query.from, 'from'); }
     if (query.to) { where.push('t.date <= @to'); params.to = assertDate(query.to, 'to'); }
     if (query.q) {
@@ -260,6 +325,7 @@ export function ledgerRoutes(app) {
         properties: {
           account: { type: 'string', description: 'Only this account (by name).' },
           category: { type: 'string', description: 'Only this category (by name).' },
+          flag: { type: 'string', description: 'Only transactions with this flag (by name).' },
           from: { type: 'string', description: 'Earliest date, YYYY-MM-DD.' },
           to: { type: 'string', description: 'Latest date, YYYY-MM-DD.' },
           q: { type: 'string', description: 'Text to search for in payee, memo and category.' },
@@ -331,9 +397,9 @@ export function ledgerRoutes(app) {
       if (/^[=+\-@\t\r]/.test(s) && Number.isNaN(Number(s))) s = `'${s}`;
       return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
-    const lines = ['date,account,payee,category,memo,amount,type,cleared,transfer_account'];
+    const lines = ['date,account,payee,category,memo,amount,type,cleared,transfer_account,flag'];
     for (const t of rows) {
-      lines.push([t.date, t.account, t.payee, t.category, t.memo, t.signed_amount.toFixed(2), t.type, t.cleared ? 'yes' : 'no', t.transfer_account].map(cell).join(','));
+      lines.push([t.date, t.account, t.payee, t.category, t.memo, t.signed_amount.toFixed(2), t.type, t.cleared ? 'yes' : 'no', t.transfer_account, t.flag].map(cell).join(','));
     }
     reply.header('Content-Type', 'text/csv; charset=utf-8');
     reply.header('Content-Disposition', 'attachment; filename="transactions.csv"');

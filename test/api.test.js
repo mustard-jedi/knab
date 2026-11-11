@@ -221,6 +221,38 @@ test('recurring transactions post when due and stop at the end date', async () =
   assert.equal(past.body.schedule, null);
 });
 
+test('flags: add, use, filter, rename and remove', async () => {
+  const { dad } = await setup();
+  await dad('POST', '/accounts', { name: 'Checking', opening_balance: 100 });
+  const flags = (await dad('GET', '/flags')).body;
+  assert.deepEqual(flags.map((f) => f.name), ['Red', 'Orange', 'Yellow', 'Green', 'Blue', 'Purple']);
+
+  const extra = await dad('POST', '/flags', { name: 'Reimburse', color: 'teal' });
+  assert.equal(extra.status, 201);
+  assert.equal((await dad('POST', '/flags', { name: 'reimburse', color: 'red' })).status, 409);
+  assert.equal((await dad('POST', '/flags', { name: 'X', color: 'beige' })).status, 400);
+
+  const tx = await dad('POST', '/transactions', { amount: 5, type: 'expense', account: 'Checking', category: 'Groceries', flag: 'reimburse' });
+  assert.deepEqual([tx.body.flag, tx.body.flag_color], ['Reimburse', 'teal']);
+  const bad = await dad('POST', '/transactions', { amount: 5, type: 'expense', account: 'Checking', category: 'Groceries', flag: 'Nope' });
+  assert.equal(bad.body.error, 'unknown_flag');
+  assert.ok(bad.body.valid_flags.includes('Reimburse'));
+
+  await dad('POST', '/transactions', { amount: 7, type: 'expense', account: 'Checking', category: 'Groceries' });
+  assert.equal((await dad('GET', '/transactions?flag=Reimburse')).body.total, 1);
+  assert.equal((await dad('GET', '/flags')).body.find((f) => f.name === 'Reimburse').count, 1);
+
+  await dad('PATCH', `/flags/${extra.body.id}`, { name: 'Owed', color: 'pink' });
+  assert.deepEqual((await dad('GET', '/transactions?flag=Owed')).body.transactions.map((t) => t.flag_color), ['pink']);
+  assert.equal((await dad('PATCH', `/transactions/${tx.body.id}`, { memo: 'kept' })).body.flag, 'Owed');
+  assert.equal((await dad('PATCH', `/transactions/${tx.body.id}`, { flag: '' })).body.flag, null);
+  await dad('PATCH', `/transactions/${tx.body.id}`, { flag: 'Owed' });
+
+  assert.equal((await dad('DELETE', `/flags/${extra.body.id}`)).status, 200);
+  assert.equal((await dad('GET', `/transactions`)).body.transactions.find((t) => t.id === tx.body.id).flag, null);
+  assert.equal((await dad('GET', '/flags')).body.length, 6);
+});
+
 test('reports and schema docs', async () => {
   const { dad, anon, app } = await setup();
   await dad('POST', '/accounts', { name: 'Checking', opening_balance: 1000, opening_date: '2026-01-01' });

@@ -3,6 +3,7 @@ import {
   hashPassword, checkPassword, startSession, endSession,
   authenticate, requireSession, requireAdmin,
 } from '../auth.js';
+import { DEFAULT_FLAGS } from '../../shared/flags.js';
 import { HttpError, sha256, newToken } from '../util.js';
 
 const credentials = {
@@ -201,6 +202,8 @@ export function systemRoutes(app) {
             .run(budgetId, groupId, n, ci));
         });
       }
+      DEFAULT_FLAGS.forEach(([flag, color], i) => db
+        .prepare('INSERT INTO flags (budget_id, name, color, sort) VALUES (?, ?, ?, ?)').run(budgetId, flag, color, i));
       return budgetId;
     })();
     reply.code(201);

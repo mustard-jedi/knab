@@ -16,6 +16,7 @@ const ICONS = {
   check: 'M5 12l5 5L20 7',
   down: 'M6 9l6 6 6-6',
   edit: 'M4 20h4L19 9l-4-4L4 16zM13 7l4 4',
+  flag: 'M5 21V4M5 4h13l-2.5 4.5L18 13H5',
   search: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4',
 };
 
@@ -28,14 +29,20 @@ export function Icon({ name, size = 20, className = '' }) {
   );
 }
 
+// Open dialogs, oldest first. Only the top one reacts to Escape.
+const openModals = [];
+
 export function Modal({ title, onClose, children }) {
   useEffect(() => {
-    const onKey = (e) => e.key === 'Escape' && onClose();
+    const me = {};
+    openModals.push(me);
+    const onKey = (e) => e.key === 'Escape' && openModals[openModals.length - 1] === me && onClose();
     document.addEventListener('keydown', onKey);
     document.body.style.overflow = 'hidden';
     return () => {
       document.removeEventListener('keydown', onKey);
-      document.body.style.overflow = '';
+      openModals.splice(openModals.indexOf(me), 1);
+      if (!openModals.length) document.body.style.overflow = '';
     };
   }, [onClose]);
   return (

@@ -17,7 +17,7 @@ Commands
                 --type expense|income     (required)
                 --account NAME            (required)
                 --category NAME           required for an expense
-                --payee TEXT  --memo TEXT  --date YYYY-MM-DD  --cleared
+                --payee TEXT  --memo TEXT  --date YYYY-MM-DD  --cleared  --flag NAME
   transfer    Move money between accounts
                 --amount 100 --from NAME --to NAME [--date YYYY-MM-DD] [--memo TEXT]
   accounts    List accounts and balances
@@ -73,7 +73,7 @@ async function call(method, route, body, needsToken = true) {
 const [command, ...rest] = process.argv.slice(2);
 const options = {
   amount: { type: 'string' }, type: { type: 'string' }, account: { type: 'string' }, category: { type: 'string' },
-  payee: { type: 'string' }, memo: { type: 'string' }, date: { type: 'string' }, cleared: { type: 'boolean' },
+  payee: { type: 'string' }, memo: { type: 'string' }, date: { type: 'string' }, cleared: { type: 'boolean' }, flag: { type: 'string' },
   from: { type: 'string' }, to: { type: 'string' }, period: { type: 'string' }, limit: { type: 'string' },
 };
 
@@ -95,7 +95,7 @@ const print = (data) => console.log(JSON.stringify(data, null, 2));
 switch (command) {
   case 'add':
     for (const required of ['type', 'account']) if (!args[required]) fail(`--${required} is required`);
-    print(await call('POST', '/transactions', { ...pick('type', 'account', 'category', 'payee', 'memo', 'date', 'cleared'), amount: number('amount') }));
+    print(await call('POST', '/transactions', { ...pick('type', 'account', 'category', 'payee', 'memo', 'date', 'cleared', 'flag'), amount: number('amount') }));
     break;
   case 'transfer':
     for (const required of ['from', 'to']) if (!args[required]) fail(`--${required} is required`);

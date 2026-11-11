@@ -3,6 +3,7 @@ import { todayStr } from '../../shared/periods.js';
 import { api } from './api.js';
 import { store, useApp, useData } from './state.jsx';
 import { ErrorNote, Field, Modal, parseAmount, useAction } from './ui.jsx';
+import { FlagManager, FlagPicker } from './flags.jsx';
 
 const FREQUENCIES = [
   ['', 'Does not repeat'],
@@ -30,6 +31,8 @@ export default function TransactionForm({ transaction, schedule, defaults = {} }
   const [category, setCategory] = useState(source?.category || defaults.category || '');
   const [memo, setMemo] = useState(source?.memo || '');
   const [cleared, setCleared] = useState(transaction?.cleared || false);
+  const [flag, setFlag] = useState(transaction?.flag || '');
+  const [managingFlags, setManagingFlags] = useState(false);
   const [frequency, setFrequency] = useState(schedule?.frequency || '');
   const [endDate, setEndDate] = useState(schedule?.end_date || '');
 
@@ -46,15 +49,15 @@ export default function TransactionForm({ transaction, schedule, defaults = {} }
     if (schedule) {
       await api('PATCH', `/recurring/${schedule.id}`, { ...entry, category, frequency, end_date: endDate });
     } else if (isTransfer) {
-      await api('PATCH', `/transactions/${transaction.id}`, { date, amount: value, memo, cleared });
+      await api('PATCH', `/transactions/${transaction.id}`, { date, amount: value, memo, cleared, flag });
     } else if (transaction) {
-      await api('PATCH', `/transactions/${transaction.id}`, { ...entry, category, cleared });
+      await api('PATCH', `/transactions/${transaction.id}`, { ...entry, category, cleared, flag });
     } else if (type === 'transfer') {
-      await api('POST', '/transfers', { date, amount: value, from_account: accountName, to_account: transferTarget, memo });
+      await api('POST', '/transfers', { date, amount: value, from_account: accountName, to_account: transferTarget, memo, ...(flag ? { flag } : {}) });
     } else {
       if (category) entry.category = category;
       if (frequency) await api('POST', '/recurring', { ...entry, frequency, ...(endDate ? { end_date: endDate } : {}) });
-      else await api('POST', '/transactions', { ...entry, cleared });
+      else await api('POST', '/transactions', { ...entry, cleared, ...(flag ? { flag } : {}) });
     }
     store.set(`knab-account-${budget.id}`, accountName);
     bump();
@@ -81,6 +84,7 @@ export default function TransactionForm({ transaction, schedule, defaults = {} }
   }
 
   return (
+    <>
     <Modal title={title} onClose={closeTxForm}>
       <form onSubmit={save} className="space-y-4">
         {!isTransfer && (
@@ -140,6 +144,8 @@ export default function TransactionForm({ transaction, schedule, defaults = {} }
           <input className="input" value={memo} onChange={(e) => setMemo(e.target.value)} maxLength={500} placeholder="Optional note" />
         </Field>
 
+        {!schedule && !frequency && <FlagPicker value={flag} onChange={setFlag} onManage={() => setManagingFlags(true)} />}
+
         {(showRepeat || schedule) && (
           <div className="grid grid-cols-2 gap-3">
             <Field label="Repeat">
@@ -169,5 +175,7 @@ export default function TransactionForm({ transaction, schedule, defaults = {} }
         </div>
       </form>
     </Modal>
+    {managingFlags && <FlagManager onClose={() => setManagingFlags(false)} />}
+    </>
   );
 }

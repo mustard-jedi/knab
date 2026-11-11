@@ -5,6 +5,7 @@ import { api, qs } from '../api.js';
 import { useApp, useData } from '../state.jsx';
 import { Empty, ErrorNote, Icon, Money, PeriodSwitcher, useAction } from '../ui.jsx';
 import { AccountForm } from './Accounts.jsx';
+import { FlagManager, FlagMark, FlagPill } from '../flags.jsx';
 
 const PAGE = 200;
 const TYPE_LABEL = { checking: 'Checking', savings: 'Savings', cash: 'Cash', credit: 'Credit card', other: 'Other' };
@@ -48,6 +49,7 @@ export default function Transactions() {
   const [params, setParams] = useSearchParams();
   const account = params.get('account') || '';
   const category = params.get('category') || '';
+  const flag = params.get('flag') || '';
   const from = params.get('from') || '';
   const to = params.get('to') || '';
   const all = params.get('range') === 'all';
@@ -64,11 +66,13 @@ export default function Transactions() {
   const [q, setQ] = useState('');
   const [limit, setLimit] = useState(PAGE);
   const [editingAccount, setEditingAccount] = useState(false);
+  const [managingFlags, setManagingFlags] = useState(false);
   useEffect(() => { const id = setTimeout(() => setQ(search.trim()), 250); return () => clearTimeout(id); }, [search]);
-  useEffect(() => { setLimit(PAGE); }, [account, category, from, to, all, q]);
+  useEffect(() => { setLimit(PAGE); }, [account, category, flag, from, to, all, q]);
 
   const accounts = useData('/accounts').data;
-  const { data, error } = useData(`/transactions${qs({ account, category, ...range, q, limit })}`);
+  const flags = useData('/flags').data || [];
+  const { data, error } = useData(`/transactions${qs({ account, category, flag: flags.some((f) => f.name === flag) ? flag : '', ...range, q, limit })}`);
 
   const update = (changes) => {
     const next = new URLSearchParams(params);
@@ -87,8 +91,8 @@ export default function Transactions() {
   const cleared = scope.reduce((s, a) => s + a.cleared_balance, 0);
   const showAccount = !info;
   const grid = showAccount
-    ? 'md:grid-cols-[6rem_8rem_minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,1fr)_7rem_7rem_2rem]'
-    : 'md:grid-cols-[6rem_minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,1fr)_7rem_7rem_2rem]';
+    ? 'md:grid-cols-[6.5rem_6rem_8rem_minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,1fr)_7rem_7rem_2rem]'
+    : 'md:grid-cols-[6.5rem_6rem_minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,1fr)_7rem_7rem_2rem]';
   const open = (t) => openTxForm({ transaction: t });
 
   return (
@@ -121,6 +125,11 @@ export default function Transactions() {
             <option value="">All accounts</option>
             {(accounts || []).map((a) => <option key={a.id} value={a.name}>{a.name}</option>)}
           </select>
+          <button type="button" className="link-btn" onClick={() => setManagingFlags(true)}><Icon name="flag" size={16} /> Flags</button>
+          <select className="input w-auto max-w-40" value={flags.some((f) => f.name === flag) ? flag : ''} onChange={(e) => update({ flag: e.target.value })} aria-label="Flag">
+            <option value="">All flags</option>
+            {flags.map((f) => <option key={f.id} value={f.name}>{f.name}</option>)}
+          </select>
           <select className="input w-auto" value={all ? 'all' : isPeriod ? 'period' : 'custom'} aria-label="Dates"
             onChange={(e) => {
               if (e.target.value === 'all') update({ range: 'all', from: '', to: '' });
@@ -150,6 +159,7 @@ export default function Transactions() {
       {rows.length > 0 && (
         <div className="card overflow-hidden">
           <div className={`hidden gap-3 border-b border-line bg-sunken px-4 py-2 md:grid ${grid}`}>
+            <span className="section-title">Flag</span>
             <span className="section-title">Date</span>
             {showAccount && <span className="section-title">Account</span>}
             <span className="section-title">Payee</span>
@@ -167,9 +177,12 @@ export default function Transactions() {
                 {/* Phone: two lines */}
                 <div className="flex items-center justify-between gap-3 md:hidden">
                   <div className="min-w-0">
-                    <div className="truncate text-sm font-medium">{payeeText(t) || (t.type === 'income' ? 'Income' : 'Expense')}</div>
+                    <div className="flex items-center gap-1.5 text-sm font-medium">
+                      {t.flag && <FlagMark color={t.flag_color} />}
+                      <span className="truncate">{payeeText(t) || (t.type === 'income' ? 'Income' : 'Expense')}</span>
+                    </div>
                     <div className="truncate text-xs text-muted">
-                      {shortDate(t.date, t.date.slice(0, 4) !== todayStr().slice(0, 4))}{showAccount && ` · ${t.account}`}{t.type !== 'transfer' && ` · ${t.category || (t.signed_amount > 0 ? 'Ready to Assign' : 'Uncategorised')}`}
+                      {shortDate(t.date, t.date.slice(0, 4) !== todayStr().slice(0, 4))}{showAccount && ` · ${t.account}`}{t.type !== 'transfer' && ` · ${t.category || (t.signed_amount > 0 ? 'Ready to Assign' : 'Uncategorised')}`}{t.flag && ` · ${t.flag}`}
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-3">
@@ -179,6 +192,7 @@ export default function Transactions() {
                 </div>
                 {/* Desktop: one grid row */}
                 <div className={`hidden items-center gap-3 text-sm md:grid ${grid}`}>
+                  <span className="min-w-0">{t.flag && <FlagPill name={t.flag} color={t.flag_color} />}</span>
                   <span className="num">{longDate(t.date)}</span>
                   {showAccount && <span className="truncate">{t.account}</span>}
                   <span className="truncate">{payeeText(t)}</span>
@@ -202,6 +216,7 @@ export default function Transactions() {
           {limit >= 1000 ? 'Showing the first 1,000 — narrow the dates to see more' : 'Show more'}
         </button>
       )}
+      {managingFlags && <FlagManager onClose={() => setManagingFlags(false)} />}
       {editingAccount && info && <AccountForm account={info} onClose={() => setEditingAccount(false)} />}
     </div>
   );
