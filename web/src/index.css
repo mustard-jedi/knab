@@ -1,0 +1,88 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  color-scheme: light;
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --sunken: #eef1f4;
+  --line: #dfe4ea;
+  --ink: #141c27;
+  --muted: #5d6b7d;
+  --accent: #0f766e;
+  --accent-fg: #ffffff;
+  --pos: #0b7a4b;
+  --pos-bg: #dcf5e7;
+  --neg: #c0332a;
+  --neg-bg: #fde4e1;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --grid: #e1e4e8;
+}
+
+.dark {
+  color-scheme: dark;
+  --bg: #0d1218;
+  --surface: #161d26;
+  --sunken: #1e2732;
+  --line: #2b3644;
+  --ink: #e9eef4;
+  --muted: #98a5b6;
+  --accent: #2ec4b1;
+  --accent-fg: #04201c;
+  --pos: #4fd38c;
+  --pos-bg: #12382a;
+  --neg: #ff8278;
+  --neg-bg: #47201d;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --grid: #2a3340;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-sunken: var(--sunken);
+  --color-line: var(--line);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-pos: var(--pos);
+  --color-pos-bg: var(--pos-bg);
+  --color-neg: var(--neg);
+  --color-neg-bg: var(--neg-bg);
+  --color-series-1: var(--series-1);
+  --color-series-2: var(--series-2);
+  --color-grid: var(--grid);
+}
+
+html, body, #root { height: 100%; }
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.num { font-variant-numeric: tabular-nums; }
+
+@layer components {
+  .card { @apply rounded-xl border border-line bg-surface; }
+  .btn {
+    @apply inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-lg border border-line bg-surface px-4 text-sm font-medium text-ink transition-colors select-none hover:bg-sunken disabled:cursor-not-allowed disabled:opacity-50 md:min-h-9 md:px-3;
+  }
+  .btn-primary { @apply border-accent bg-accent text-accent-fg hover:bg-accent hover:opacity-90; }
+  .btn-danger { @apply border-neg text-neg hover:bg-neg-bg; }
+  .btn-ghost { @apply border-transparent bg-transparent; }
+  .input {
+    @apply min-h-11 w-full rounded-lg border border-line bg-surface px-3 text-base text-ink placeholder:text-muted md:min-h-9 md:text-sm;
+  }
+  .input:focus-visible, .btn:focus-visible, a:focus-visible, button:focus-visible {
+    @apply outline-2 outline-offset-1 outline-accent;
+  }
+  .label { @apply mb-1 block text-xs font-medium text-muted; }
+  .section-title { @apply text-xs font-semibold tracking-wide text-muted uppercase; }
+}
