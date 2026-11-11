@@ -1,285 +1,520 @@
-import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { periodByLabel, periodFor, periodTitle, shortDate, todayStr } from '../../../shared/periods.js';
+import { Fragment, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { addDays, periodByLabel, periodFor, periodTitle, shiftLabel, shortDate, todayStr } from '../../../shared/periods.js';
 import { qs } from '../api.js';
+import { AgeChart, Donut, OTHER, SERIES, SpendingChart, Swatch, WorthChart } from '../charts.jsx';
 import { useApp, useData } from '../state.jsx';
-import { Empty, ErrorNote, Money, PageHeader, PeriodSwitcher } from '../ui.jsx';
+import { Empty, ErrorNote, Icon, Money } from '../ui.jsx';
 
-const TABS = [['spending', 'Spending'], ['flow', 'Income vs spending'], ['worth', 'Net worth']];
+const TABS = [
+  ['breakdown', 'Spending Breakdown'],
+  ['trends', 'Spending Trends'],
+  ['worth', 'Net Worth'],
+  ['flow', 'Income v Expense'],
+  ['age', 'Age of Money'],
+];
 
-function useWidth() {
-  const ref = useRef(null);
-  const [width, setWidth] = useState(0);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return undefined;
-    // Measure straight away; the observer only handles later resizes.
-    setWidth(Math.floor(el.getBoundingClientRect().width));
-    const ro = new ResizeObserver(([entry]) => setWidth(Math.floor(entry.contentRect.width)));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  return [ref, width];
+// ---- Period naming: calendar months read "Nov 2026", other cutoffs show their dates ----
+
+const isMonth = (p) => p.start.endsWith('-01') && addDays(p.end, 1).endsWith('-01');
+const monthName = (p) => `${shortDate(p.start).split(' ')[0]} ${p.start.slice(0, 4)}`;
+const pName = (p) => (isMonth(p) ? monthName(p) : periodTitle(p));
+const pShort = (p) => (isMonth(p) ? monthName(p) : `${shortDate(p.start)} – ${shortDate(p.end)}`);
+const pTick = (p) => (isMonth(p) ? `${p.start.slice(5, 7)}/${p.start.slice(2, 4)}` : shortDate(p.start));
+function rangeTitle(periods) {
+  const first = periods[0];
+  const last = periods[periods.length - 1];
+  if (!isMonth(first)) return periodTitle({ start: first.start, end: last.end });
+  return periods.length === 1 ? monthName(first) : `${monthName(first)} – ${monthName(last)}`;
 }
 
-// Round axis steps: 1, 2, 2.5 or 5 times a power of ten.
-function axis(min, max, target = 4) {
-  if (min === max) max = min + 1;
-  const raw = (max - min) / target;
-  const pow = 10 ** Math.floor(Math.log10(raw));
-  const step = [1, 2, 2.5, 5, 10].find((m) => m * pow >= raw) * pow;
-  const lo = Math.floor(min / step) * step;
-  const hi = Math.ceil(max / step) * step;
-  const ticks = [];
-  for (let v = lo; v <= hi + step / 2; v += step) ticks.push(Math.round(v * 100) / 100);
-  return { lo, hi, ticks };
-}
-
-function useCompact() {
+function useRange(defaultCount) {
   const { budget } = useApp();
-  try {
-    const fmt = new Intl.NumberFormat(undefined, { style: 'currency', currency: budget.currency, notation: 'compact', maximumFractionDigits: 1 });
-    return (n) => fmt.format(n);
-  } catch {
-    return (n) => String(n);
-  }
+  const current = periodFor(todayStr(), budget.cutoff_day).label;
+  const [range, setRange] = useState({ end: current, count: defaultCount });
+  const start = shiftLabel(range.end, 1 - range.count);
+  const periods = Array.from({ length: range.count }, (_, i) => periodByLabel(shiftLabel(start, i), budget.cutoff_day));
+  return { ...range, start, periods, current, setRange };
 }
 
-const H = 240;
-const PAD = { top: 12, right: 24, bottom: 24, left: 52 };
+function exportCsv(name, rows) {
+  const cell = (v) => {
+    let s = String(v ?? '');
+    if (typeof v === 'string' && /^[=+\-@]/.test(s)) s = `'${s}`; // keep spreadsheets from running it as a formula
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const url = URL.createObjectURL(new Blob([rows.map((r) => r.map(cell).join(',')).join('\n')], { type: 'text/csv' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${name}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
-function Frame({ width, scale, labels, children }) {
-  const compact = useCompact();
-  const y = (v) => PAD.top + (1 - (v - scale.lo) / (scale.hi - scale.lo)) * (H - PAD.top - PAD.bottom);
-  const every = Math.ceil(labels.length / Math.max(1, Math.floor((width - PAD.left) / 56)));
+// ---- Shared controls ----
+
+function Toolbar({ title, range, counts = [1, 3, 6, 12, 24], onExport, children }) {
+  return (
+    <div className="mb-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h1 className="text-xl font-semibold">{title}</h1>
+        {onExport && <button type="button" className="link-btn" onClick={onExport}><Icon name="down" size={16} /> Export</button>}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {range && (
+          <>
+            <div className="flex w-full items-center rounded-lg border border-line bg-surface md:w-auto">
+              <button type="button" className="btn btn-ghost px-2" aria-label="Earlier"
+                onClick={() => range.setRange({ end: shiftLabel(range.end, -range.count), count: range.count })}><Icon name="left" size={18} /></button>
+              <span className="num flex-1 px-1 text-center text-sm font-semibold whitespace-nowrap">{rangeTitle(range.periods)}</span>
+              <button type="button" className="btn btn-ghost px-2" aria-label="Later"
+                onClick={() => range.setRange({ end: shiftLabel(range.end, range.count), count: range.count })}><Icon name="right" size={18} /></button>
+            </div>
+            <select className="input w-auto" value={range.count} aria-label="How many periods"
+              onChange={(e) => range.setRange({ end: range.end, count: Number(e.target.value) })}>
+              {counts.map((n) => <option key={n} value={n}>{n === 1 ? '1 period' : `${n} periods`}</option>)}
+            </select>
+            {range.end !== range.current && (
+              <button type="button" className="link-btn" onClick={() => range.setRange({ end: range.current, count: range.count })}>Latest</button>
+            )}
+          </>
+        )}
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function AccountFilter({ value, onChange }) {
+  const accounts = useData('/accounts').data || [];
+  return (
+    <select className="input w-auto max-w-44" value={value} onChange={(e) => onChange(e.target.value)} aria-label="Account">
+      <option value="">All accounts</option>
+      {accounts.map((a) => <option key={a.id} value={a.name}>{a.name}</option>)}
+    </select>
+  );
+}
+
+// Value is '' (everything), 'g:<group name>' or 'c:<category name>'.
+function CategoryFilter({ value, onChange }) {
+  const groups = useData('/budget').data?.groups || [];
+  return (
+    <select className="input w-auto max-w-44" value={value} onChange={(e) => onChange(e.target.value)} aria-label="Categories">
+      <option value="">All categories</option>
+      {groups.filter((g) => g.categories.length).map((g) => (
+        <optgroup key={g.id} label={g.name}>
+          <option value={`g:${g.name}`}>All of {g.name}</option>
+          {g.categories.map((c) => <option key={c.id} value={`c:${c.name}`}>{c.name}</option>)}
+        </optgroup>
+      ))}
+    </select>
+  );
+}
+const categoryParams = (value) => (value.startsWith('g:') ? { group: value.slice(2) } : value ? { category: value.slice(2) } : {});
+
+function Stat({ label, children, sub }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-xs text-muted">{label}</div>
+      <div className="truncate font-semibold">{children}</div>
+      {sub && <div className="truncate text-xs text-muted">{sub}</div>}
+    </div>
+  );
+}
+
+function Delta({ value, percent, tone = true }) {
+  const { money } = useApp();
+  if (Math.abs(value) < 0.005) return <span className="num text-muted">{money(0)} (0.0%)</span>;
+  const colour = !tone ? 'text-muted' : value > 0 ? 'text-pos' : 'text-neg';
+  return (
+    <span className={`num whitespace-nowrap ${colour}`}>
+      {value > 0 ? '↑ +' : '↓ −'}{money(Math.abs(value))}{percent !== null && ` (${Math.abs(percent).toFixed(1)}%)`}
+    </span>
+  );
+}
+
+function Segmented({ value, onChange, options }) {
+  return (
+    <div className="inline-grid auto-cols-fr grid-flow-col gap-1 rounded-lg bg-sunken p-1">
+      {options.map(([v, text]) => (
+        <button key={v} type="button" aria-pressed={value === v} onClick={() => onChange(v)}
+          className={`min-h-9 cursor-pointer rounded-md px-3 text-sm font-medium md:min-h-7 ${value === v ? 'bg-surface text-ink shadow-sm' : 'text-muted'}`}>
+          {text}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const Loading = () => <p className="text-muted">Loading…</p>;
+
+// ---- Spending Breakdown ----
+
+function Breakdown() {
+  const range = useRange(1);
+  const [account, setAccount] = useState('');
+  const [filter, setFilter] = useState('');
+  const [by, setBy] = useState('categories');
+  const { data, error } = useData(`/reports/flow${qs({ start: range.start, end: range.end, account, ...categoryParams(filter) })}`);
+
+  let items = [];
+  if (data) {
+    if (by === 'groups') {
+      const groups = new Map();
+      for (const c of data.categories) groups.set(c.group, (groups.get(c.group) || 0) + c.total);
+      items = [...groups].map(([name, total]) => ({ name, total }));
+    } else items = data.categories.map((c) => ({ name: c.category, group: c.group, total: c.total }));
+    items.sort((a, b) => b.total - a.total);
+  }
+  const total = items.reduce((s, x) => s + x.total, 0);
+  const positive = items.filter((x) => x.total > 0);
+  // Five named parts at most; the tail folds into "Other".
+  const segments = positive.slice(0, 5).map((x, i) => ({ name: x.name, value: x.total, color: SERIES[i] }));
+  const rest = positive.slice(5).reduce((s, x) => s + x.total, 0);
+  if (rest > 0) segments.push({ name: `Other (${positive.length - 5})`, value: rest, color: OTHER });
+  const share = positive.reduce((s, x) => s + x.total, 0) || 1;
+  const max = Math.max(0, ...items.map((x) => x.total));
+  const frequent = data?.categories.reduce((best, c) => (c.count > (best?.count || 0) ? c : best), null);
+  const from = range.periods[0].start;
+  const to = range.periods[range.periods.length - 1].end;
+
   return (
     <>
-      {scale.ticks.map((t) => (
-        <g key={t}>
-          <line x1={PAD.left} x2={width - PAD.right} y1={y(t)} y2={y(t)} stroke={t === 0 ? 'var(--muted)' : 'var(--grid)'} strokeWidth="1" />
-          <text x={PAD.left - 6} y={y(t) + 4} textAnchor="end" fontSize="11" fill="var(--muted)">{compact(t)}</text>
-        </g>
-      ))}
-      {labels.map((l, i) => (i % every === 0 ? (
-        <text key={l.x + l.text} x={l.x} y={H - 6} textAnchor="middle" fontSize="11" fill="var(--muted)">{l.text}</text>
-      ) : null))}
-      {children(y)}
+      <Toolbar title="Spending Breakdown" range={range}
+        onExport={data && (() => exportCsv('spending-breakdown', [[by === 'groups' ? 'Group' : 'Category', 'Spending'], ...items.map((x) => [x.name, x.total])]))}>
+        <CategoryFilter value={filter} onChange={setFilter} />
+        <AccountFilter value={account} onChange={setAccount} />
+      </Toolbar>
+      <ErrorNote error={error} />
+      {!data && !error && <Loading />}
+      {data && !items.length && <Empty title="No spending in these dates">Try an earlier period, or clear the filters.</Empty>}
+      {data && items.length > 0 && (
+        <div className="space-y-4">
+          <div className="card p-4">
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-sm text-muted">Total spending</div>
+                <Money value={total} className="text-2xl font-semibold" />
+              </div>
+              <Segmented value={by} onChange={setBy} options={[['categories', 'Categories'], ['groups', 'Groups']]} />
+            </div>
+            {segments.length > 0 && (
+              <div className="grid items-center gap-4 md:grid-cols-2">
+                <Donut segments={segments} total={total} label="Total spending" />
+                <ul className="space-y-2 text-sm">
+                  {segments.map((s) => (
+                    <li key={s.name} className="flex items-center justify-between gap-3">
+                      <span className="flex min-w-0 items-center gap-2"><Swatch color={s.color} /><span className="truncate">{s.name}</span></span>
+                      <span className="shrink-0"><Money value={s.value} className="font-medium" />
+                        <span className="num ml-2 inline-block w-12 text-right text-xs text-muted">{((s.value / share) * 100).toFixed(1)}%</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+
+          <div className="card grid grid-cols-2 gap-4 p-4">
+            <Stat label="Average per period"><Money value={total / data.periods.length} /></Stat>
+            <Stat label="Average per day"><Money value={total / data.days} /></Stat>
+            <Stat label="Most frequent category" sub={frequent ? `${frequent.count} transaction${frequent.count === 1 ? '' : 's'}` : undefined}>{frequent ? frequent.category : '—'}</Stat>
+            <Stat label="Largest outflow" sub={data.largest_outflow ? <Money value={data.largest_outflow.amount} /> : undefined}>
+              {data.largest_outflow ? data.largest_outflow.payee || data.largest_outflow.category : '—'}
+            </Stat>
+          </div>
+
+          <div className="card p-4">
+            <div className="mb-3 flex justify-between"><span className="section-title">{by === 'groups' ? 'Groups' : 'Categories'}</span><span className="section-title">Total spending</span></div>
+            <ul className="space-y-3">
+              {items.map((x) => {
+                const row = (
+                  <>
+                    <div className="mb-1 flex items-baseline justify-between gap-3 text-sm">
+                      <span className="truncate group-hover:underline">{x.name} {x.group && <span className="text-xs text-muted">{x.group}</span>}</span>
+                      <span className="shrink-0"><Money value={x.total} className="font-medium" />
+                        <span className="num ml-2 inline-block w-12 text-right text-xs text-muted">{x.total > 0 ? `${((x.total / share) * 100).toFixed(1)}%` : ''}</span>
+                      </span>
+                    </div>
+                    <div className="h-2 rounded-r bg-sunken">
+                      {x.total > 0 && <div className="h-2 rounded-r bg-series-1" style={{ width: `${Math.max(1, (x.total / max) * 100)}%` }} />}
+                    </div>
+                  </>
+                );
+                return (
+                  <li key={x.name}>
+                    {by === 'groups' ? row : <Link to={`/transactions${qs({ category: x.name, from, to, account })}`} className="group block">{row}</Link>}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        </div>
+      )}
     </>
   );
 }
 
-function Tooltip({ x, width, children }) {
-  const left = Math.min(Math.max(x, 90), Math.max(90, width - 90));
-  return (
-    <div className="pointer-events-none absolute top-0 z-10 w-44 -translate-x-1/2 rounded-lg border border-line bg-surface p-2 text-xs shadow-lg" style={{ left }}>
-      {children}
-    </div>
-  );
-}
+// ---- Spending Trends ----
 
-function Swatch({ color }) {
-  return <span className="inline-block size-2.5 rounded-sm" style={{ background: color }} />;
-}
-
-// Bar with only its data end rounded, anchored to the baseline.
-function bar(x, w, y0, y1) {
-  const r = Math.min(4, w / 2, Math.abs(y0 - y1));
-  return `M${x},${y0} V${y1 + r} Q${x},${y1} ${x + r},${y1} H${x + w - r} Q${x + w},${y1} ${x + w},${y1 + r} V${y0} Z`;
-}
-
-function FlowChart({ periods }) {
-  const [ref, width] = useWidth();
-  const [hover, setHover] = useState(null);
-  const scale = axis(0, Math.max(1, ...periods.flatMap((p) => [p.income, p.spending])));
-  const band = (width - PAD.left - PAD.right) / periods.length;
-  const barW = Math.max(3, Math.min(18, (band - 8) / 2));
-  const centre = (i) => PAD.left + band * (i + 0.5);
-  const active = hover !== null ? periods[hover] : null;
-  return (
-    <div>
-      <div className="mb-2 flex gap-4 text-xs text-muted">
-        <span className="flex items-center gap-1.5"><Swatch color="var(--series-1)" /> Income</span>
-        <span className="flex items-center gap-1.5"><Swatch color="var(--series-2)" /> Spending</span>
-      </div>
-      <div ref={ref} className="relative" onMouseLeave={() => setHover(null)}>
-        {width > 0 && (
-          <svg width={width} height={H} role="img" aria-label="Income and spending per period">
-            <Frame width={width} scale={scale} labels={periods.map((p, i) => ({ x: centre(i), text: shortDate(p.start) }))}>
-              {(y) => periods.map((p, i) => (
-                <g key={p.label} onMouseEnter={() => setHover(i)} onClick={() => setHover(i)}>
-                  <rect x={PAD.left + band * i} y={PAD.top} width={band} height={H - PAD.top - PAD.bottom} fill={hover === i ? 'var(--sunken)' : 'transparent'} />
-                  {p.income > 0 && <path d={bar(centre(i) - barW - 1, barW, y(0), y(p.income))} fill="var(--series-1)" />}
-                  {p.spending > 0 && <path d={bar(centre(i) + 1, barW, y(0), y(p.spending))} fill="var(--series-2)" />}
-                </g>
-              ))}
-            </Frame>
-          </svg>
-        )}
-        {active && (
-          <Tooltip x={centre(hover)} width={width}>
-            <div className="mb-1 font-semibold">{periodTitle(active)}</div>
-            <div className="flex justify-between gap-2"><span className="flex items-center gap-1.5"><Swatch color="var(--series-1)" /> Income</span><Money value={active.income} /></div>
-            <div className="flex justify-between gap-2"><span className="flex items-center gap-1.5"><Swatch color="var(--series-2)" /> Spending</span><Money value={active.spending} /></div>
-            <div className="mt-1 flex justify-between gap-2 border-t border-line pt-1"><span>Left over</span><Money value={active.income - active.spending} signed /></div>
-          </Tooltip>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function WorthChart({ periods }) {
-  const [ref, width] = useWidth();
-  const [hover, setHover] = useState(null);
-  const values = periods.map((p) => p.net_worth);
-  const scale = axis(Math.min(0, ...values), Math.max(0, ...values));
-  const step = periods.length > 1 ? (width - PAD.left - PAD.right - 16) / (periods.length - 1) : 0;
-  const x = (i) => PAD.left + 8 + step * i;
-  const active = hover !== null ? periods[hover] : null;
-  const onMove = (e) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const i = step ? Math.round((e.clientX - rect.left - PAD.left - 8) / step) : 0;
-    setHover(Math.min(periods.length - 1, Math.max(0, i)));
-  };
-  return (
-    <div ref={ref} className="relative" onMouseMove={onMove} onMouseLeave={() => setHover(null)} onClick={onMove}>
-      {width > 0 && (
-        <svg width={width} height={H} role="img" aria-label="Net worth at the end of each period">
-          <Frame width={width} scale={scale} labels={periods.map((p, i) => ({ x: x(i), text: shortDate(p.end) }))}>
-            {(y) => (
-              <>
-                {active && <line x1={x(hover)} x2={x(hover)} y1={PAD.top} y2={H - PAD.bottom} stroke="var(--muted)" strokeWidth="1" strokeDasharray="3 3" />}
-                <polyline points={periods.map((p, i) => `${x(i)},${y(p.net_worth)}`).join(' ')} fill="none" stroke="var(--series-1)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
-                {(periods.length === 1 || active) && (
-                  <circle cx={x(hover ?? 0)} cy={y((active || periods[0]).net_worth)} r="4.5" fill="var(--series-1)" stroke="var(--surface)" strokeWidth="2" />
-                )}
-              </>
-            )}
-          </Frame>
-        </svg>
-      )}
-      {active && (
-        <Tooltip x={x(hover)} width={width}>
-          <div className="mb-1 font-semibold">{shortDate(active.end, true)}</div>
-          <div className="flex justify-between gap-2"><span>Net worth</span><Money value={active.net_worth} className="font-semibold" /></div>
-          <div className="flex justify-between gap-2 text-muted"><span>Assets</span><Money value={active.assets} /></div>
-          <div className="flex justify-between gap-2 text-muted"><span>Debts</span><Money value={active.debts} /></div>
-        </Tooltip>
-      )}
-    </div>
-  );
-}
-
-function Spending() {
-  const { budget } = useApp();
-  const current = periodFor(todayStr(), budget.cutoff_day);
-  const [label, setLabel] = useState(current.label);
+function Trends() {
+  const range = useRange(6);
   const [account, setAccount] = useState('');
-  const period = periodByLabel(label, budget.cutoff_day);
-  const accounts = useData('/accounts').data;
-  const { data, error } = useData(`/reports/spending${qs({ from: period.start, to: period.end, account })}`);
-  const max = Math.max(0, ...(data?.categories || []).map((c) => c.spent));
+  const [filter, setFilter] = useState('');
+  const { data, error } = useData(`/reports/flow${qs({ start: range.start, end: range.end, account, ...categoryParams(filter) })}`);
+
+  const points = (data?.periods || []).map((p, i) => ({
+    name: pName(p),
+    tick: pTick(p),
+    total: data.categories.reduce((s, c) => s + c.amounts[i], 0),
+    top: data.categories.map((c) => ({ name: c.category, value: c.amounts[i] })).filter((c) => c.value > 0).sort((a, b) => b.value - a.value).slice(0, 4),
+  }));
+  const total = points.reduce((s, p) => s + p.total, 0);
+  const average = points.length ? total / points.length : 0;
+
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <PeriodSwitcher label={label} onChange={setLabel} currentLabel={current.label} />
-        <select className="input md:w-48" value={account} onChange={(e) => setAccount(e.target.value)} aria-label="Account">
-          <option value="">All accounts</option>
-          {(accounts || []).map((a) => <option key={a.id} value={a.name}>{a.name}</option>)}
-        </select>
-      </div>
+    <>
+      <Toolbar title="Spending Trends" range={range} counts={[3, 6, 12, 24]}
+        onExport={data && (() => exportCsv('spending-trends', [['Period', 'Total spending', 'Compared to average'], ...points.map((p) => [p.name, p.total, Math.round((p.total - average) * 100) / 100])]))}>
+        <CategoryFilter value={filter} onChange={setFilter} />
+        <AccountFilter value={account} onChange={setAccount} />
+      </Toolbar>
       <ErrorNote error={error} />
-      {data && !data.categories.length && <Empty title="No spending in this period" />}
-      {data && data.categories.length > 0 && (
-        <div className="card p-4">
-          <div className="mb-4 flex items-baseline justify-between">
-            <span className="text-sm text-muted">Total spent</span>
-            <Money value={data.total} className="text-2xl font-semibold" />
+      {!data && !error && <Loading />}
+      {data && (
+        <div className="space-y-4">
+          <div className="card p-4">
+            <div className="mb-4 flex flex-wrap gap-x-10 gap-y-3">
+              <div>
+                <div className="text-sm text-muted">Average spending per period</div>
+                <Money value={average} className="text-2xl font-semibold" />
+              </div>
+              <div>
+                <div className="text-sm text-muted">Total spending</div>
+                <Money value={total} className="text-lg font-semibold" />
+              </div>
+            </div>
+            <SpendingChart points={points} average={average} />
           </div>
-          <ul className="space-y-3">
-            {data.categories.map((c) => (
-              <li key={c.category}>
-                <Link to={`/transactions${qs({ category: c.category, from: period.start, to: period.end, account })}`} className="group block">
-                  <div className="mb-1 flex items-baseline justify-between gap-3 text-sm">
-                    <span className="truncate group-hover:underline">{c.category} <span className="text-xs text-muted">{c.group}</span></span>
-                    <span className="shrink-0"><Money value={c.spent} className="font-medium" />
-                      <span className="num ml-2 inline-block w-10 text-right text-xs text-muted">{data.total > 0 ? `${Math.round((c.spent / data.total) * 100)}%` : ''}</span>
-                    </span>
-                  </div>
-                  <div className="h-2 rounded-r bg-sunken">
-                    {c.spent > 0 && <div className="h-2 rounded-r bg-series-1" style={{ width: `${Math.max(1, (c.spent / max) * 100)}%` }} />}
-                  </div>
-                </Link>
-              </li>
-            ))}
-          </ul>
+          <div className="card overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-line text-left">
+                  <th className="section-title px-4 py-2">Period</th>
+                  <th className="section-title px-4 py-2 text-right">Total spending</th>
+                  <th className="section-title px-4 py-2 text-right">Compared to average</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line">
+                {[...points].reverse().map((p) => (
+                  <tr key={p.name}>
+                    <td className="num px-4 py-2 whitespace-nowrap">{p.name}</td>
+                    <td className="px-4 py-2 text-right"><Money value={p.total} /></td>
+                    <td className="px-4 py-2 text-right"><Delta value={p.total - average} percent={average ? ((p.total - average) / average) * 100 : null} tone={false} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
 
-function Trend({ kind }) {
-  const [count, setCount] = useState(12);
-  const { data, error } = useData(`/reports/trend?count=${count}`);
-  if (error) return <ErrorNote error={error} />;
-  if (!data) return <p className="text-muted">Loading…</p>;
-  const periods = data.periods;
-  const rows = [...periods].reverse();
+// ---- Net Worth ----
+
+function NetWorth() {
+  const range = useRange(12);
+  const { data, error } = useData(`/reports/trend${qs({ count: range.count, end: range.end })}`);
+  const points = (data?.periods || []).map((p, i, all) => {
+    const before = i > 0 ? all[i - 1].net_worth : null;
+    const change = before === null ? 0 : p.net_worth - before;
+    return { ...p, name: pName(p), tick: pTick(p), change, percent: before ? (change / Math.abs(before)) * 100 : null };
+  });
+  const last = points[points.length - 1];
+  const first = points[0];
+  const overall = last ? last.net_worth - first.net_worth : 0;
+
   return (
-    <div className="space-y-4">
-      <select className="input md:w-48" value={count} onChange={(e) => setCount(Number(e.target.value))} aria-label="How many periods">
-        {[6, 12, 24].map((n) => <option key={n} value={n}>Last {n} periods</option>)}
-      </select>
-      <div className="card p-4">{kind === 'flow' ? <FlowChart periods={periods} /> : <WorthChart periods={periods} />}</div>
-      <div className="card overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-line text-left">
-              <th className="section-title px-4 py-2">Period</th>
-              {(kind === 'flow' ? ['Income', 'Spending', 'Left over'] : ['Assets', 'Debts', 'Net worth']).map((h) => <th key={h} className="section-title px-4 py-2 text-right">{h}</th>)}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-line">
-            {rows.map((p) => (
-              <tr key={p.label}>
-                <td className="num px-4 py-2 whitespace-nowrap">{periodTitle(p)}</td>
-                {kind === 'flow' ? (
-                  <>
-                    <td className="px-4 py-2 text-right"><Money value={p.income} /></td>
-                    <td className="px-4 py-2 text-right"><Money value={p.spending} /></td>
-                    <td className="px-4 py-2 text-right"><Money value={p.income - p.spending} signed /></td>
-                  </>
-                ) : (
-                  <>
-                    <td className="px-4 py-2 text-right"><Money value={p.assets} /></td>
-                    <td className="px-4 py-2 text-right"><Money value={p.debts} /></td>
-                    <td className="px-4 py-2 text-right"><Money value={p.net_worth} signed className="font-medium" /></td>
-                  </>
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    <>
+      <Toolbar title="Net Worth" range={range} counts={[6, 12, 24]}
+        onExport={data && (() => exportCsv('net-worth', [['Period', 'Assets', 'Debts', 'Net worth', 'Change'], ...points.map((p) => [p.name, p.assets, p.debts, p.net_worth, Math.round(p.change * 100) / 100])]))} />
+      <ErrorNote error={error} />
+      {!data && !error && <Loading />}
+      {last && (
+        <div className="space-y-4">
+          <div className="card p-4">
+            <div className="text-sm text-muted">Net worth</div>
+            <Money value={last.net_worth} className="text-2xl font-semibold" />
+            <div className="mt-3 mb-4 grid grid-cols-2 gap-4 md:grid-cols-3">
+              <Stat label="Assets"><Money value={last.assets} /></Stat>
+              <Stat label="Debts"><Money value={last.debts} /></Stat>
+              <div className="col-span-2 md:col-span-1">
+                <Stat label="Change over these periods"><Delta value={overall} percent={first.net_worth ? (overall / Math.abs(first.net_worth)) * 100 : null} /></Stat>
+              </div>
+            </div>
+            <WorthChart points={points} />
+          </div>
+          <div className="card overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-line text-left">
+                  <th className="section-title px-4 py-2">Period</th>
+                  <th className="section-title px-4 py-2 text-right">Net worth</th>
+                  <th className="section-title px-4 py-2 text-right">Change</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line">
+                {[...points].reverse().map((p) => (
+                  <tr key={p.label}>
+                    <td className="num px-4 py-2 whitespace-nowrap">{p.name}</td>
+                    <td className="px-4 py-2 text-right"><Money value={p.net_worth} className="font-medium" /></td>
+                    <td className="px-4 py-2 text-right"><Delta value={p.change} percent={p.percent} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
+
+// ---- Income v Expense ----
+
+function Cells({ amounts, sign = 1, signed = false, strong = false }) {
+  const total = amounts.reduce((s, n) => s + n, 0);
+  return [...amounts, total / amounts.length, total].map((n, i) => (
+    // eslint-disable-next-line react/no-array-index-key
+    <td key={i} className={`px-3 py-2 text-right ${strong ? 'font-semibold' : ''}`}><Money value={n * sign} signed={signed} /></td>
+  ));
+}
+
+function IncomeExpense() {
+  const range = useRange(6);
+  const [account, setAccount] = useState('');
+  const { data, error } = useData(`/reports/flow${qs({ start: range.start, end: range.end, account })}`);
+
+  const sum = (rows) => (data?.periods || []).map((_, i) => rows.reduce((s, r) => s + r.amounts[i], 0));
+  const groups = [];
+  for (const c of data?.categories || []) {
+    let g = groups.find((x) => x.name === c.group);
+    if (!g) groups.push((g = { name: c.group, rows: [] }));
+    g.rows.push(c);
+  }
+  const income = sum(data?.income || []);
+  const expense = sum(data?.categories || []);
+  const net = income.map((n, i) => n - expense[i]);
+  const first = 'sticky left-0 bg-surface px-4 py-2 text-left font-normal';
+
+  const onExport = data && (() => {
+    const line = (name, amounts, sign = 1) => {
+      const t = amounts.reduce((s, n) => s + n, 0);
+      return [name, ...[...amounts, t / amounts.length, t].map((n) => Math.round(n * sign * 100) / 100)];
+    };
+    exportCsv('income-v-expense', [
+      ['', ...data.periods.map(pName), 'Average', 'Total'],
+      ...data.income.map((r) => line(`Income: ${r.payee}`, r.amounts)),
+      line('Total income', income),
+      ...data.categories.map((c) => line(`${c.group}: ${c.category}`, c.amounts, -1)),
+      line('Total expenses', expense, -1),
+      line('Net income', net),
+    ]);
+  });
+
+  return (
+    <>
+      <Toolbar title="Income v Expense" range={range} counts={[3, 6, 12]} onExport={onExport}>
+        <AccountFilter value={account} onChange={setAccount} />
+      </Toolbar>
+      <ErrorNote error={error} />
+      {!data && !error && <Loading />}
+      {data && (
+        <div className="card overflow-x-auto">
+          <table className="w-full min-w-max text-sm">
+            <thead>
+              <tr className="border-b border-line">
+                <th className={first} />
+                {[...data.periods.map(pShort), 'Average', 'Total'].map((h) => <th key={h} className="section-title px-3 py-2 text-right whitespace-nowrap">{h}</th>)}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line">
+              <tr><th colSpan={data.periods.length + 3} className="bg-sunken px-4 py-2 text-left text-base font-semibold text-pos"><span className="sticky left-4">Income</span></th></tr>
+              {data.income.map((r) => <tr key={r.payee}><th className={`${first} pl-7`}>{r.payee}</th><Cells amounts={r.amounts} /></tr>)}
+              <tr><th className={`${first} font-semibold`}>Total income</th><Cells amounts={income} strong /></tr>
+
+              <tr><th colSpan={data.periods.length + 3} className="bg-sunken px-4 py-2 text-left text-base font-semibold text-neg"><span className="sticky left-4">Expenses</span></th></tr>
+              {groups.map((g) => (
+                <Fragment key={g.name}>
+                  <tr><th colSpan={data.periods.length + 3} className="px-4 pt-3 pb-1 text-left text-xs font-semibold tracking-wide text-muted uppercase"><span className="sticky left-4">{g.name}</span></th></tr>
+                  {g.rows.map((c) => <tr key={c.category}><th className={`${first} pl-7`}>{c.category}</th><Cells amounts={c.amounts} sign={-1} /></tr>)}
+                  <tr><th className={`${first} font-medium`}>Total {g.name}</th><Cells amounts={sum(g.rows)} sign={-1} /></tr>
+                </Fragment>
+              ))}
+              <tr><th className={`${first} font-semibold`}>Total expenses</th><Cells amounts={expense} sign={-1} strong /></tr>
+
+              <tr className="border-t-2 border-line"><th className={`${first} text-base font-semibold`}>Net income</th><Cells amounts={net} signed strong /></tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ---- Age of Money ----
+
+function AgeOfMoney() {
+  const [count, setCount] = useState(6);
+  const { data, error } = useData(`/reports/age?count=${count}`);
+  const points = (data?.periods || []).map((p) => ({ ...p, name: pName(p), tick: pTick(p) }));
+  return (
+    <>
+      <Toolbar title="Age of Money"
+        onExport={data && (() => exportCsv('age-of-money', [['Period', 'Age of money (days)'], ...points.map((p) => [p.name, p.age ?? ''])]))} />
+      <ErrorNote error={error} />
+      {!data && !error && <Loading />}
+      {data && (
+        <div className="space-y-4">
+          <div className="card p-4">
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-sm text-muted">Current</div>
+                <div className="text-2xl font-semibold">{data.current === null ? 'No spending yet' : `${data.current} day${data.current === 1 ? '' : 's'}`}</div>
+              </div>
+              <Segmented value={count} onChange={setCount} options={[[6, '6 periods'], [12, '12 periods']]} />
+            </div>
+            <AgeChart points={points} />
+          </div>
+          <div className="card p-4 text-sm">
+            <h2 className="mb-2 font-semibold">Understanding Age of Money</h2>
+            <p className="text-muted">Age of money is how long, on average, money sits in your accounts between arriving and being spent. Knab spends your oldest money first and averages the age of your last ten outflows. A growing number means you are living on older income and have more room to plan.</p>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+const PAGES = { breakdown: Breakdown, trends: Trends, worth: NetWorth, flow: IncomeExpense, age: AgeOfMoney };
 
 export default function Reports() {
-  const [tab, setTab] = useState('spending');
+  const [params, setParams] = useSearchParams();
+  const tab = PAGES[params.get('tab')] ? params.get('tab') : 'breakdown';
+  const Page = PAGES[tab];
   return (
-    <div className="max-w-5xl">
-      <PageHeader title="Reports" />
-      <div className="mb-4 grid auto-cols-fr grid-flow-col gap-1 rounded-lg bg-sunken p-1 md:inline-grid" role="tablist">
+    <div className="max-w-6xl">
+      <div className="-mx-4 mb-4 flex gap-5 overflow-x-auto border-b border-line px-4 [scrollbar-width:none] md:mx-0 md:px-0" role="tablist">
         {TABS.map(([value, text]) => (
-          <button key={value} type="button" role="tab" aria-selected={tab === value} onClick={() => setTab(value)}
-            className={`min-h-10 cursor-pointer rounded-md px-3 text-sm font-medium md:min-h-8 ${tab === value ? 'bg-surface text-ink shadow-sm' : 'text-muted'}`}>
+          <button key={value} type="button" role="tab" aria-selected={tab === value} onClick={() => setParams({ tab: value }, { replace: true })}
+            className={`-mb-px min-h-11 shrink-0 cursor-pointer border-b-2 text-sm font-medium whitespace-nowrap ${tab === value ? 'border-accent text-ink' : 'border-transparent text-muted hover:text-ink'}`}>
             {text}
           </button>
         ))}
       </div>
-      {tab === 'spending' ? <Spending /> : <Trend kind={tab} key={tab} />}
+      <Page key={tab} />
     </div>
   );
 }

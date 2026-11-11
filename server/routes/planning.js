@@ -6,7 +6,7 @@
 // so Ready to Assign + the sum of every Available always equals the total of
 // all account balances on E.
 import { resolveBudget } from '../auth.js';
-import { toCents, fromCents, assertDate, assertLabel } from '../util.js';
+import { HttpError, toCents, fromCents, assertDate, assertLabel } from '../util.js';
 import { findAccount, findCategory } from '../ledger.js';
 import { todayStr, periodFor, periodByLabel, shiftLabel } from '../../shared/periods.js';
 
@@ -196,5 +196,147 @@ export function planningRoutes(app) {
       });
     }
     return { periods };
+  });
+
+  const labelRange = (query, budget, maxCount = 36) => {
+    const endLabel = query.end ? assertLabel(query.end) : periodFor(todayStr(), budget.cutoff_day).label;
+    const startLabel = query.start ? assertLabel(query.start) : endLabel;
+    const months = (l) => Number(l.slice(0, 4)) * 12 + Number(l.slice(5, 7));
+    const count = months(endLabel) - months(startLabel) + 1;
+    if (count < 1 || count > maxCount) {
+      throw new HttpError(400, 'invalid_range', `"start" must not be after "end", and the range can cover at most ${maxCount} periods.`);
+    }
+    return Array.from({ length: count }, (_, i) => periodByLabel(shiftLabel(startLabel, i), budget.cutoff_day));
+  };
+
+  // Spending per category and income per payee, one column per period.
+  app.get('/reports/flow', {
+    schema: {
+      tags: ['Reports'],
+      summary: 'Spending by category and income by payee for a run of periods',
+      security,
+      querystring: {
+        type: 'object',
+        properties: {
+          start: { type: 'string', description: 'Label (YYYY-MM) of the first period. Defaults to "end".' },
+          end: { type: 'string', description: 'Label (YYYY-MM) of the last period. Defaults to the current period.' },
+          account: { type: 'string', description: 'Only this account (by name).' },
+          category: { type: 'string', description: 'Only spending in this category (by name). Income is not filtered.' },
+          group: { type: 'string', description: 'Only spending in this category group (by name). Income is not filtered.' },
+        },
+      },
+    },
+  }, async (request) => {
+    const budget = resolveBudget(app, request);
+    const periods = labelRange(request.query, budget);
+    const from = periods[0].start;
+    const to = periods[periods.length - 1].end;
+    const accountId = request.query.account ? findAccount(db, budget.id, request.query.account).id : null;
+    const categoryId = request.query.category ? findCategory(db, budget.id, request.query.category).id : null;
+    const groupName = request.query.group ? request.query.group.trim().toLowerCase() : null;
+
+    const index = new Map(periods.map((p, i) => [p.label, i]));
+    const zeros = () => periods.map(() => 0);
+    const cats = new Map(); // id -> row, in budget order
+    for (const c of db.prepare(
+      `SELECT c.id, c.name, g.name AS grp FROM categories c JOIN category_groups g ON g.id = c.group_id
+       WHERE c.budget_id = ? ORDER BY g.sort, g.id, c.sort, c.id`,
+    ).all(budget.id)) {
+      if (categoryId && c.id !== categoryId) continue;
+      if (groupName && c.grp.toLowerCase() !== groupName) continue;
+      cats.set(c.id, { category: c.name, group: c.grp, amounts: zeros(), count: 0 });
+    }
+    const income = new Map(); // payee -> amounts
+    let largest = null;
+
+    const rows = db.prepare(
+      `SELECT date, amount, payee, category_id FROM transactions
+       WHERE budget_id = @budget AND date BETWEEN @from AND @to AND transfer_id IS NULL AND opening = 0
+         AND (@account IS NULL OR account_id = @account)`,
+    ).all({ budget: budget.id, from, to, account: accountId });
+    for (const t of rows) {
+      const i = index.get(periodFor(t.date, budget.cutoff_day).label);
+      if (t.category_id === null) {
+        const payee = t.payee || 'No payee';
+        if (!income.has(payee)) income.set(payee, zeros());
+        income.get(payee)[i] += t.amount;
+        continue;
+      }
+      const cat = cats.get(t.category_id);
+      if (!cat) continue;
+      cat.amounts[i] -= t.amount; // spending is positive; refunds reduce it
+      if (t.amount < 0) {
+        cat.count += 1;
+        if (!largest || t.amount < largest.amount) largest = { amount: t.amount, payee: t.payee, category: cat.category, date: t.date };
+      }
+    }
+
+    const shape = (amounts) => ({ amounts: amounts.map(fromCents), total: fromCents(amounts.reduce((s, n) => s + n, 0)) });
+    return {
+      periods,
+      days: Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1,
+      categories: [...cats.values()].filter((c) => c.count || c.amounts.some(Boolean))
+        .map((c) => ({ category: c.category, group: c.group, count: c.count, ...shape(c.amounts) })),
+      income: [...income.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([payee, amounts]) => ({ payee, ...shape(amounts) })),
+      largest_outflow: largest && { ...largest, amount: fromCents(-largest.amount) },
+    };
+  });
+
+  // Age of money: money is spent oldest first, and the age of an outflow is how
+  // long the money it used had been sitting in the accounts. The figure for a
+  // date is the average age of the last ten outflows up to that date.
+  app.get('/reports/age', {
+    schema: {
+      tags: ['Reports'],
+      summary: 'Age of money at the end of each period',
+      security,
+      querystring: {
+        type: 'object',
+        properties: {
+          count: { type: 'integer', minimum: 1, maximum: 36, default: 6 },
+          end: { type: 'string', description: 'Label (YYYY-MM) of the last period. Defaults to the current period.' },
+        },
+      },
+    },
+  }, async (request) => {
+    const budget = resolveBudget(app, request);
+    const today = todayStr();
+    const endLabel = request.query.end ? assertLabel(request.query.end) : periodFor(today, budget.cutoff_day).label;
+    const day = (d) => Date.parse(d) / 86400000;
+
+    const buckets = []; // unspent inflows, oldest first
+    let head = 0;
+    const outflows = []; // { date, age }
+    for (const t of db.prepare(
+      'SELECT date, amount FROM transactions WHERE budget_id = ? AND transfer_id IS NULL AND amount <> 0 ORDER BY date, id',
+    ).all(budget.id)) {
+      if (t.amount > 0) {
+        buckets.push({ date: t.date, left: t.amount });
+        continue;
+      }
+      let need = -t.amount;
+      let weighted = 0;
+      while (need > 0 && head < buckets.length) {
+        const b = buckets[head];
+        const used = Math.min(need, b.left);
+        weighted += used * (day(t.date) - day(b.date));
+        b.left -= used;
+        need -= used;
+        if (b.left === 0) head += 1;
+      }
+      // Anything not covered by earlier inflows is brand-new money: age 0.
+      outflows.push({ date: t.date, age: weighted / -t.amount });
+    }
+
+    const ageAt = (date) => {
+      const recent = outflows.filter((o) => o.date <= date).slice(-10);
+      return recent.length ? Math.round(recent.reduce((s, o) => s + o.age, 0) / recent.length) : null;
+    };
+    const periods = [];
+    for (let i = request.query.count - 1; i >= 0; i--) {
+      const period = periodByLabel(shiftLabel(endLabel, -i), budget.cutoff_day);
+      periods.push({ ...period, age: period.start > today ? null : ageAt(period.end < today ? period.end : today) });
+    }
+    return { current: ageAt(today), periods };
   });
 }

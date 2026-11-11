@@ -147,6 +147,8 @@ Do not add any other fields.
 | `PUT /budget/assign` | `{"category": "Groceries", "amount": 400, "period": "2026-01"}` |
 | `GET /reports/spending?from=&to=` | Spending by category |
 | `GET /reports/trend?count=12` | Income, spending and net worth per period |
+| `GET /reports/flow?start=&end=` | Spending per category and income per payee, one column per period. Optional `account`, `category`, `group` |
+| `GET /reports/age?count=6` | Age of money at the end of each period |
 
 ## Command-line client
 

@@ -237,6 +237,21 @@ test('reports and schema docs', async () => {
   assert.deepEqual([trend[1].income, trend[1].spending, trend[1].net_worth], [2000, 100, 2900]);
   assert.deepEqual([trend[0].income, trend[0].net_worth], [0, 1000]); // opening balance is not income
 
+  const flow = (await dad('GET', '/reports/flow?start=2025-12&end=2026-01')).body;
+  assert.deepEqual(flow.periods.map((p) => p.label), ['2025-12', '2026-01']);
+  assert.equal(flow.days, 62);
+  assert.deepEqual(flow.categories.map((c) => [c.category, c.amounts, c.total, c.count]), [['Groceries', [0, 60], 60, 1], ['Transport', [0, 40], 40, 1]]);
+  assert.deepEqual(flow.income, [{ payee: 'No payee', amounts: [0, 2000], total: 2000 }]);
+  assert.equal(flow.largest_outflow.amount, 60);
+  const one = (await dad('GET', '/reports/flow?end=2026-01&category=Transport')).body;
+  assert.deepEqual(one.categories.map((c) => c.category), ['Transport']);
+  assert.equal((await dad('GET', '/reports/flow?start=2026-02&end=2026-01')).status, 400);
+
+  // Both expenses used the 1000 opening balance from Jan 1: 24 and 25 days old.
+  const age = (await dad('GET', '/reports/age?count=2&end=2026-01')).body;
+  assert.deepEqual(age.periods.map((p) => p.age), [null, 25]);
+  assert.equal(age.current, 25);
+
   const csv = (await dad('GET', '/export/transactions.csv')).body;
   assert.equal(csv.trim().split('\n').length, 5);
 
