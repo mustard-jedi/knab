@@ -19,6 +19,9 @@
   --series-1: #2a78d6;
   --series-2: #eb6834;
   --grid: #e1e4e8;
+  --side: #10343a;
+  --side-ink: #eef6f5;
+  --side-muted: #a5c2c0;
 }
 
 .dark {
@@ -38,6 +41,9 @@
   --series-1: #3987e5;
   --series-2: #d95926;
   --grid: #2a3340;
+  --side: #0a1c20;
+  --side-ink: #e6f0ef;
+  --side-muted: #8fadab;
 }
 
 @theme inline {
@@ -56,6 +62,9 @@
   --color-series-1: var(--series-1);
   --color-series-2: var(--series-2);
   --color-grid: var(--grid);
+  --color-side: var(--side);
+  --color-side-ink: var(--side-ink);
+  --color-side-muted: var(--side-muted);
 }
 
 html, body, #root { height: 100%; }
@@ -84,5 +93,8 @@ body {
     @apply outline-2 outline-offset-1 outline-accent;
   }
   .label { @apply mb-1 block text-xs font-medium text-muted; }
+  .chip { @apply inline-flex min-h-9 cursor-pointer items-center gap-1.5 rounded-full border border-line bg-surface px-3 text-xs font-medium whitespace-nowrap text-muted hover:text-ink md:min-h-7; }
+  .chip-on { @apply border-accent bg-accent text-accent-fg hover:text-accent-fg; }
+  .link-btn { @apply inline-flex min-h-9 cursor-pointer items-center gap-1.5 text-sm font-medium text-accent hover:underline; }
   .section-title { @apply text-xs font-semibold tracking-wide text-muted uppercase; }
 }

@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
+import { Link, NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { api } from './api.js';
-import { useApp } from './state.jsx';
+import { useApp, useData } from './state.jsx';
 import { ErrorNote, Field, Icon, useAction } from './ui.jsx';
 import TransactionForm from './TransactionForm.jsx';
 import Budget from './pages/Budget.jsx';
-import Accounts from './pages/Accounts.jsx';
+import Accounts, { AccountForm } from './pages/Accounts.jsx';
 import Transactions from './pages/Transactions.jsx';
 import Scheduled from './pages/Scheduled.jsx';
 import Reports from './pages/Reports.jsx';
@@ -109,34 +109,80 @@ function FirstBudget() {
   );
 }
 
+const CASH_TYPES = ['checking', 'savings', 'cash', 'other'];
+
+function SideAccounts({ title, accounts, active }) {
+  const { money } = useApp();
+  if (!accounts.length) return null;
+  const total = accounts.reduce((s, a) => s + a.balance, 0);
+  return (
+    <div>
+      <div className="flex items-center justify-between px-3 py-1 text-[11px] font-semibold tracking-wider text-side-muted uppercase">
+        <span>{title}</span><span className="num">{money(total)}</span>
+      </div>
+      {accounts.map((a) => (
+        <Link key={a.id} to={`/transactions?account=${encodeURIComponent(a.name)}`}
+          className={`flex items-center justify-between gap-2 rounded-lg py-1.5 pr-3 pl-5 text-sm ${active === a.name.toLowerCase() ? 'bg-white/15 font-medium' : 'hover:bg-white/10'}`}>
+          <span className="truncate">{a.name}</span>
+          <span className={`num shrink-0 text-xs ${a.balance < -0.005 ? 'rounded-full bg-neg-bg px-2 py-0.5 font-semibold text-neg' : ''}`}>{money(a.balance)}</span>
+        </Link>
+      ))}
+    </div>
+  );
+}
+
 function Shell() {
   const { budget, budgets, selectBudget, openTxForm, txForm } = useApp();
-  const linkClass = ({ isActive }) =>
-    `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium ${isActive ? 'bg-sunken text-ink' : 'text-muted hover:bg-sunken hover:text-ink'}`;
+  const location = useLocation();
+  const accounts = useData('/accounts').data || [];
+  const [addingAccount, setAddingAccount] = useState(false);
+  const onRegister = location.pathname === '/transactions';
+  const activeAccount = onRegister ? (new URLSearchParams(location.search).get('account') || '').toLowerCase() : null;
+  const open = accounts.filter((a) => !a.closed);
+
+  const sideLink = (isActive) =>
+    `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium ${isActive ? 'bg-white/15' : 'text-side-ink hover:bg-white/10'}`;
   const tabClass = ({ isActive }) =>
     `flex flex-1 flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium ${isActive ? 'text-accent' : 'text-muted'}`;
   const mobile = NAV.filter((n) => n.mobile);
 
-  const budgetPicker = budgets.length > 1 ? (
-    <select className="input font-semibold" value={budget.id} onChange={(e) => selectBudget(Number(e.target.value))} aria-label="Budget">
+  const picker = (className) => (budgets.length > 1 ? (
+    <select className={className} value={budget.id} onChange={(e) => selectBudget(Number(e.target.value))} aria-label="Budget">
       {budgets.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
     </select>
-  ) : <div className="truncate px-1 font-semibold">{budget.name}</div>;
+  ) : <div className="truncate px-1 font-semibold">{budget.name}</div>);
 
   return (
     <div className="flex min-h-full">
-      <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col gap-4 border-r border-line bg-surface p-4 md:flex">
-        <div className="flex items-center gap-2 px-1 text-lg font-semibold"><img src="/favicon.svg" alt="" className="size-6" /> Knab</div>
-        {budgetPicker}
-        <button type="button" className="btn btn-primary" onClick={() => openTxForm({})}><Icon name="plus" size={18} /> Add transaction</button>
-        <nav className="flex flex-col gap-1">
-          {NAV.map((n) => <NavLink key={n.to} to={n.to} end={n.to === '/'} className={linkClass}><Icon name={n.icon} size={18} />{n.label}</NavLink>)}
+      <aside className="sticky top-0 hidden h-dvh w-64 shrink-0 flex-col gap-3 overflow-y-auto bg-side p-3 text-side-ink md:flex">
+        <div className="flex items-center gap-2 px-2 pt-1">
+          <img src="/favicon.svg" alt="" className="size-7" />
+          <div className="min-w-0 flex-1">{picker('w-full cursor-pointer rounded-md bg-white/10 px-2 py-1 font-semibold text-side-ink')}</div>
+        </div>
+        <button type="button" className="btn btn-primary border-transparent" onClick={() => openTxForm({})}><Icon name="plus" size={18} /> Add transaction</button>
+        <nav className="flex flex-col gap-0.5">
+          <NavLink to="/" end className={({ isActive }) => sideLink(isActive)}><Icon name="budget" size={18} />Budget</NavLink>
+          <NavLink to="/reports" className={({ isActive }) => sideLink(isActive)}><Icon name="chart" size={18} />Reports</NavLink>
+          <Link to="/transactions" className={sideLink(onRegister && !activeAccount)}><Icon name="accounts" size={18} />All accounts</Link>
+        </nav>
+        <div className="flex flex-col gap-3">
+          <SideAccounts title="Cash" accounts={open.filter((a) => CASH_TYPES.includes(a.type))} active={activeAccount} />
+          <SideAccounts title="Credit" accounts={open.filter((a) => a.type === 'credit')} active={activeAccount} />
+          <button type="button" onClick={() => setAddingAccount(true)}
+            className="mx-1 flex min-h-9 cursor-pointer items-center justify-center gap-2 rounded-lg bg-white/10 text-sm font-medium hover:bg-white/15">
+            <Icon name="plus" size={16} /> Add account
+          </button>
+        </div>
+        <nav className="mt-auto flex flex-col gap-0.5 border-t border-white/10 pt-3">
+          <NavLink to="/scheduled" className={({ isActive }) => sideLink(isActive)}><Icon name="repeat" size={18} />Scheduled</NavLink>
+          <NavLink to="/accounts" className={({ isActive }) => sideLink(isActive)}><Icon name="list" size={18} />Manage accounts</NavLink>
+          <NavLink to="/settings" className={({ isActive }) => sideLink(isActive)}><Icon name="settings" size={18} />Settings</NavLink>
         </nav>
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 border-b border-line bg-surface px-4 py-2 md:hidden">{budgetPicker}</header>
-        <main className="mx-auto w-full max-w-5xl flex-1 px-4 pt-4 pb-28 md:px-8 md:pt-8 md:pb-10">
+        <header className="sticky top-0 z-30 border-b border-line bg-surface px-4 py-2 md:hidden">{picker('input font-semibold')}</header>
+        <main className="w-full flex-1 px-4 pt-4 pb-28 md:px-6 md:pt-6 md:pb-10">
           <Routes>
             <Route path="/" element={<Budget />} />
             <Route path="/accounts" element={<Accounts />} />
@@ -161,6 +207,7 @@ function Shell() {
       </nav>
 
       {txForm && <TransactionForm {...txForm} />}
+      {addingAccount && <AccountForm onClose={() => setAddingAccount(false)} />}
     </div>
   );
 }

@@ -8,7 +8,7 @@ import { Empty, ErrorNote, Field, Icon, Modal, Money, PageHeader, parseAmount, u
 const TYPES = [['checking', 'Checking'], ['savings', 'Savings'], ['cash', 'Cash'], ['credit', 'Credit card'], ['other', 'Other']];
 const typeLabel = (t) => TYPES.find(([v]) => v === t)?.[1] || t;
 
-function AccountForm({ account, onClose }) {
+export function AccountForm({ account, onClose }) {
   const { bump } = useApp();
   const [name, setName] = useState(account?.name || '');
   const [type, setType] = useState(account?.type || 'checking');
@@ -76,7 +76,7 @@ export default function Accounts() {
   const total = data.reduce((s, a) => s + a.balance, 0);
 
   return (
-    <div>
+    <div className="max-w-3xl">
       <PageHeader title="Accounts">
         <button className="btn btn-primary" onClick={() => setForm({})}><Icon name="plus" size={18} /> Add account</button>
       </PageHeader>

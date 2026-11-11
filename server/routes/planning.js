@@ -30,14 +30,22 @@ export function planningRoutes(app) {
     const current = periodFor(todayStr(), budget.cutoff_day);
     const period = request.query.period ? periodByLabel(assertLabel(request.query.period), budget.cutoff_day) : current;
 
+    const previous = periodByLabel(shiftLabel(period.label, -1), budget.cutoff_day);
     const rows = db.prepare(
       `SELECT c.id, c.name, c.hidden, c.group_id,
          COALESCE((SELECT amount FROM assignments s WHERE s.category_id = c.id AND s.period = @label), 0) AS assigned,
          COALESCE((SELECT SUM(amount) FROM assignments s WHERE s.category_id = c.id AND s.period <= @label), 0) AS assigned_total,
          COALESCE((SELECT SUM(amount) FROM transactions t WHERE t.category_id = c.id AND t.date BETWEEN @start AND @end), 0) AS activity,
-         COALESCE((SELECT SUM(amount) FROM transactions t WHERE t.category_id = c.id AND t.date <= @end), 0) AS activity_total
+         COALESCE((SELECT SUM(amount) FROM transactions t WHERE t.category_id = c.id AND t.date <= @end), 0) AS activity_total,
+         COALESCE((SELECT amount FROM assignments s WHERE s.category_id = c.id AND s.period = @prevLabel), 0) AS last_assigned,
+         COALESCE((SELECT SUM(amount) FROM transactions t WHERE t.category_id = c.id AND t.date BETWEEN @prevStart AND @prevEnd), 0) AS last_activity
        FROM categories c WHERE c.budget_id = @budget ORDER BY c.sort, c.id`,
-    ).all({ budget: budget.id, label: period.label, start: period.start, end: period.end });
+    ).all({
+      budget: budget.id, label: period.label, start: period.start, end: period.end,
+      prevLabel: previous.label, prevStart: previous.start, prevEnd: previous.end,
+    });
+    const future = db.prepare('SELECT COALESCE(SUM(amount), 0) AS n FROM assignments WHERE budget_id = ? AND period > ?')
+      .get(budget.id, period.label).n;
 
     const inflow = db.prepare(
       `SELECT COALESCE(SUM(amount), 0) AS n FROM transactions
@@ -54,11 +62,10 @@ export function planningRoutes(app) {
       totals.assigned += r.assigned;
       totals.activity += r.activity;
       totals.available += available;
-      // Hidden categories drop out of the view once they are empty.
-      if (r.hidden && !r.assigned && !r.activity && !available) continue;
       byGroup.get(r.group_id).push({
         id: r.id, name: r.name, hidden: Boolean(r.hidden),
         assigned: fromCents(r.assigned), activity: fromCents(r.activity), available: fromCents(available),
+        last_assigned: fromCents(r.last_assigned), last_activity: fromCents(r.last_activity),
       });
     }
 
@@ -69,6 +76,9 @@ export function planningRoutes(app) {
       currency: budget.currency,
       ready_to_assign: fromCents(inflow - assignedEver),
       totals: { assigned: fromCents(totals.assigned), activity: fromCents(totals.activity), available: fromCents(totals.available) },
+      // What the categories held when the previous period ended.
+      left_over: fromCents(totals.available - totals.assigned - totals.activity),
+      assigned_future: fromCents(future),
       groups: groups.map((g) => ({ ...g, categories: byGroup.get(g.id) })),
     };
   });

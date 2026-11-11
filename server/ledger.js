@@ -42,10 +42,11 @@ function categoryRequired(db, budgetId) {
 
 const TX_SELECT = `
   SELECT t.id, t.date, t.amount, t.payee, t.memo, t.cleared, t.opening, t.transfer_id, t.recurring_id,
-         a.name AS account, c.name AS category, ta.name AS transfer_account
+         a.name AS account, c.name AS category, g.name AS category_group, ta.name AS transfer_account
   FROM transactions t
   JOIN accounts a ON a.id = t.account_id
   LEFT JOIN categories c ON c.id = t.category_id
+  LEFT JOIN category_groups g ON g.id = c.group_id
   LEFT JOIN transactions tt ON tt.id = t.transfer_id
   LEFT JOIN accounts ta ON ta.id = tt.account_id`;
 
@@ -61,6 +62,7 @@ export function txShape(row) {
     signed_amount: fromCents(row.amount),
     account: row.account,
     category: row.category ?? null,
+    category_group: row.category_group ?? null,
     payee: row.payee,
     memo: row.memo,
     cleared: Boolean(row.cleared),

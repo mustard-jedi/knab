@@ -18,7 +18,7 @@ export default function Scheduled() {
   if (!data) return <p className="text-muted">Loading…</p>;
 
   return (
-    <div>
+    <div className="max-w-4xl">
       <PageHeader title="Scheduled" />
       <p className="mb-4 text-sm text-muted">Recurring transactions are added to your accounts automatically on their date. To create one, add a transaction and choose how often it repeats.</p>
       <ErrorNote error={skipError} />

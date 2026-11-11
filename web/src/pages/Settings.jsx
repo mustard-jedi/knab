@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { periodFor, periodTitle, todayStr } from '../../../shared/periods.js';
 import { api, download } from '../api.js';
-import { useApp, useData } from '../state.jsx';
+import { useApp } from '../state.jsx';
 import { ErrorNote, Field, Modal, PageHeader, useAction } from '../ui.jsx';
 import { NewBudgetForm } from '../App.jsx';
 
@@ -53,112 +53,6 @@ function BudgetSettings() {
         </div>
       </form>
     </Section>
-  );
-}
-
-function Categories() {
-  const { bump } = useApp();
-  const { data } = useData('/categories');
-  const [name, setName] = useState('');
-  const [group, setGroup] = useState('');
-  const [newGroup, setNewGroup] = useState('');
-  const [editing, setEditing] = useState(null);
-
-  const groups = data || [];
-  const groupName = group === '__new' ? newGroup : group || groups[0]?.name || '';
-  const [add, adding, addError] = useAction(async (e) => {
-    e.preventDefault();
-    if (!groupName.trim()) throw new Error('Enter a group name.');
-    await api('POST', '/categories', { name, group: groupName });
-    setName('');
-    setNewGroup('');
-    if (group === '__new') setGroup(groupName);
-    bump();
-  });
-  const [act, acting, actError] = useAction(async (method, path, body) => { await api(method, path, body); bump(); });
-
-  return (
-    <Section title="Categories" description="Hide a category you no longer use; its history is kept. A category can only be deleted if it has no transactions.">
-      <div className="space-y-4">
-        {groups.map((g) => (
-          <div key={g.id}>
-            <div className="flex items-center justify-between">
-              <h3 className="section-title">{g.name}</h3>
-              <span className="flex gap-1">
-                <button className="btn btn-ghost min-h-8 px-2 text-xs text-muted" onClick={() => setEditing({ kind: 'group', ...g })}>Rename</button>
-                {!g.categories.length && <button className="btn btn-ghost min-h-8 px-2 text-xs text-neg" disabled={acting} onClick={() => act('DELETE', `/category-groups/${g.id}`)}>Delete</button>}
-              </span>
-            </div>
-            <ul className="mt-1 divide-y divide-line rounded-lg border border-line">
-              {g.categories.map((c) => (
-                <li key={c.id} className="flex items-center justify-between gap-2 py-1 pr-1 pl-3">
-                  <span className={`truncate text-sm ${c.hidden ? 'text-muted line-through' : ''}`}>{c.name}</span>
-                  <span className="flex shrink-0 gap-1">
-                    <button className="btn btn-ghost min-h-8 px-2 text-xs" onClick={() => setEditing({ kind: 'category', group: g.name, ...c })}>Edit</button>
-                    <button className="btn btn-ghost min-h-8 px-2 text-xs" disabled={acting} onClick={() => act('PATCH', `/categories/${c.id}`, { hidden: !c.hidden })}>{c.hidden ? 'Show' : 'Hide'}</button>
-                  </span>
-                </li>
-              ))}
-              {!g.categories.length && <li className="px-3 py-2 text-sm text-muted">No categories</li>}
-            </ul>
-          </div>
-        ))}
-      </div>
-      <ErrorNote error={actError} />
-      <form onSubmit={add} className="grid gap-3 border-t border-line pt-4 md:grid-cols-[1fr_1fr_auto] md:items-end">
-        <Field label="New category"><input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Pets" required /></Field>
-        <Field label="Group">
-          <select className="input" value={group === '__new' ? '__new' : groupName} onChange={(e) => setGroup(e.target.value)}>
-            {groups.map((g) => <option key={g.id} value={g.name}>{g.name}</option>)}
-            <option value="__new">New group…</option>
-          </select>
-        </Field>
-        <button className="btn btn-primary" disabled={adding}>Add</button>
-        {(group === '__new' || !groups.length) && (
-          <Field label="New group name" className="md:col-span-3"><input className="input" value={newGroup} onChange={(e) => { setGroup('__new'); setNewGroup(e.target.value); }} required /></Field>
-        )}
-      </form>
-      <ErrorNote error={addError} />
-      {editing && <EditName item={editing} groups={groups} onClose={() => setEditing(null)} />}
-    </Section>
-  );
-}
-
-function EditName({ item, groups, onClose }) {
-  const { bump } = useApp();
-  const [name, setName] = useState(item.name);
-  const [group, setGroup] = useState(item.group);
-  const isCategory = item.kind === 'category';
-  const [save, busy, error] = useAction(async (e) => {
-    e.preventDefault();
-    if (isCategory) await api('PATCH', `/categories/${item.id}`, { name, group });
-    else await api('PATCH', `/category-groups/${item.id}`, { name });
-    bump();
-    onClose();
-  });
-  const [remove, removing, removeError] = useAction(async () => {
-    await api('DELETE', `/categories/${item.id}`);
-    bump();
-    onClose();
-  });
-  return (
-    <Modal title={isCategory ? 'Edit category' : 'Rename group'} onClose={onClose}>
-      <form onSubmit={save} className="space-y-4">
-        <Field label="Name"><input className="input" value={name} onChange={(e) => setName(e.target.value)} required autoFocus /></Field>
-        {isCategory && (
-          <Field label="Group">
-            <select className="input" value={group} onChange={(e) => setGroup(e.target.value)}>
-              {groups.map((g) => <option key={g.id} value={g.name}>{g.name}</option>)}
-            </select>
-          </Field>
-        )}
-        <ErrorNote error={error || removeError} />
-        <div className="flex gap-3">
-          {isCategory && <button type="button" className="btn btn-danger" onClick={remove} disabled={removing}>Delete</button>}
-          <button className="btn btn-primary flex-1" disabled={busy}>Save</button>
-        </div>
-      </form>
-    </Modal>
   );
 }
 
@@ -381,12 +275,11 @@ function BudgetsAndData() {
 export default function Settings() {
   const { budget, me } = useApp();
   return (
-    <div className="space-y-4">
+    <div className="max-w-3xl space-y-4">
       <PageHeader title="Settings" />
       {budget.is_owner ? <BudgetSettings /> : (
         <Section title="This budget" description={`“${budget.name}” is shared with you by ${budget.owner}. Only the owner can change its name, currency or period start day (currently day ${budget.cutoff_day}).`} />
       )}
-      <Categories />
       {budget.is_owner && <Sharing />}
       <Tokens />
       {me.is_admin && <Users />}

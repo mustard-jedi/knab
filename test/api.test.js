@@ -69,6 +69,10 @@ test('envelope maths: ready to assign + available = account balances', async () 
   const next = (await dad('GET', '/budget?period=2026-02')).body;
   const g2 = next.groups.flatMap((g) => g.categories).find((c) => c.name === 'Groceries');
   assert.deepEqual([g2.assigned, g2.activity, g2.available], [0, 0, 257.5]);
+  assert.deepEqual([g2.last_assigned, g2.last_activity], [300, -42.5]);
+  assert.equal(next.left_over, 257.5);
+  assert.equal(budget.assigned_future, 0);
+  assert.equal(tx.body.category_group, 'Everyday');
 
   // The previous period (Dec 23 - Jan 22) has no activity.
   const prev = (await dad('GET', '/budget?period=2025-12')).body;

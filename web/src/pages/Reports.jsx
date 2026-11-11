@@ -269,7 +269,7 @@ function Trend({ kind }) {
 export default function Reports() {
   const [tab, setTab] = useState('spending');
   return (
-    <div>
+    <div className="max-w-5xl">
       <PageHeader title="Reports" />
       <div className="mb-4 grid auto-cols-fr grid-flow-col gap-1 rounded-lg bg-sunken p-1 md:inline-grid" role="tablist">
         {TABS.map(([value, text]) => (
