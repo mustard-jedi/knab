@@ -6,8 +6,21 @@ import { useApp, useData } from '../state.jsx';
 import { Empty, ErrorNote, Icon, Money, PeriodSwitcher, useAction } from '../ui.jsx';
 import { AccountForm } from './Accounts.jsx';
 import { FlagManager, FlagMark, FlagPill } from '../flags.jsx';
+import { ResizeHandle, useColumns } from '../columns.jsx';
 
 const PAGE = 200;
+// Desktop register columns. Memo takes the leftover space.
+const COLUMNS = [
+  { key: 'flag', label: 'Flag', width: 96 },
+  { key: 'date', label: 'Date', width: 92 },
+  { key: 'account', label: 'Account', width: 120 },
+  { key: 'payee', label: 'Payee', width: 96, grow: 1 },
+  { key: 'category', label: 'Category', width: 96, grow: 1.2 },
+  { key: 'memo', label: 'Memo', width: 72, flex: true },
+  { key: 'outflow', label: 'Outflow', width: 104, right: true },
+  { key: 'inflow', label: 'Inflow', width: 104, right: true },
+  { key: 'cleared', label: 'C', width: 32, fixed: true },
+];
 const TYPE_LABEL = { checking: 'Checking', savings: 'Savings', cash: 'Cash', credit: 'Credit card', other: 'Other' };
 
 const payeeText = (t) => (t.type === 'transfer' ? `Transfer: ${t.transfer_account}` : t.payee);
@@ -90,9 +103,9 @@ export default function Transactions() {
   const working = scope.reduce((s, a) => s + a.balance, 0);
   const cleared = scope.reduce((s, a) => s + a.cleared_balance, 0);
   const showAccount = !info;
-  const grid = showAccount
-    ? 'md:grid-cols-[6.5rem_6rem_8rem_minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,1fr)_7rem_7rem_2rem]'
-    : 'md:grid-cols-[6.5rem_6rem_minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,1fr)_7rem_7rem_2rem]';
+  const columns = showAccount ? COLUMNS : COLUMNS.filter((c) => c.key !== 'account');
+  const cols = useColumns('knab-register-columns', columns);
+  const gridStyle = { gridTemplateColumns: cols.template };
   const open = (t) => openTxForm({ transaction: t });
 
   return (
@@ -157,17 +170,15 @@ export default function Transactions() {
       {data && !rows.length && <Empty title="No transactions here">Try another period or account, or add one with the + button.</Empty>}
 
       {rows.length > 0 && (
-        <div className="card overflow-hidden">
-          <div className={`hidden gap-3 border-b border-line bg-sunken px-4 py-2 md:grid ${grid}`}>
-            <span className="section-title">Flag</span>
-            <span className="section-title">Date</span>
-            {showAccount && <span className="section-title">Account</span>}
-            <span className="section-title">Payee</span>
-            <span className="section-title">Category</span>
-            <span className="section-title">Memo</span>
-            <span className="section-title text-right">Outflow</span>
-            <span className="section-title text-right">Inflow</span>
-            <span className="section-title text-center" title="Cleared">C</span>
+        <div className="card overflow-hidden md:overflow-x-auto">
+          <div className="md:min-w-(--register-width)" style={{ '--register-width': `${cols.minWidth + 32}px` }}>
+          <div className="hidden gap-3 border-b border-line bg-sunken px-4 py-2 md:grid" style={gridStyle}>
+            {columns.map((c) => (
+              <span key={c.key} className={`section-title relative min-w-0 whitespace-nowrap ${c.right ? 'text-right' : c.fixed ? 'text-center' : ''}`} title={c.fixed ? 'Cleared' : undefined}>
+                {c.label}
+                {!c.flex && !c.fixed && <ResizeHandle column={c} label={c.label} cols={cols} />}
+              </span>
+            ))}
           </div>
           <ul className="divide-y divide-line">
             {rows.map((t) => (
@@ -191,7 +202,7 @@ export default function Transactions() {
                   </div>
                 </div>
                 {/* Desktop: one grid row */}
-                <div className={`hidden items-center gap-3 text-sm md:grid ${grid}`}>
+                <div className="hidden items-center gap-3 text-sm md:grid" style={gridStyle}>
                   <span className="min-w-0">{t.flag && <FlagPill name={t.flag} color={t.flag_color} />}</span>
                   <span className="num">{longDate(t.date)}</span>
                   {showAccount && <span className="truncate">{t.account}</span>}
@@ -207,7 +218,9 @@ export default function Transactions() {
           </ul>
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line bg-sunken px-4 py-2 text-xs text-muted">
             <span>{data.total} transaction{data.total === 1 ? '' : 's'} shown for these dates</span>
+            {cols.customised && <button type="button" className="hidden cursor-pointer font-medium text-accent hover:underline md:inline" onClick={cols.reset}>Reset column widths</button>}
             <span>Net <Money value={data.net} signed className="font-semibold" /></span>
+          </div>
           </div>
         </div>
       )}

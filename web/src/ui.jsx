@@ -16,6 +16,7 @@ const ICONS = {
   check: 'M5 12l5 5L20 7',
   down: 'M6 9l6 6 6-6',
   edit: 'M4 20h4L19 9l-4-4L4 16zM13 7l4 4',
+  grip: 'M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01',
   flag: 'M5 21V4M5 4h13l-2.5 4.5L18 13H5',
   search: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4',
 };

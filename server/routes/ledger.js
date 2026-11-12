@@ -8,6 +8,7 @@ import {
 } from '../ledger.js';
 import { todayStr, parseDate, nextOccurrence } from '../../shared/periods.js';
 import { FLAG_COLORS } from '../../shared/flags.js';
+import { exportBudget } from '../portable.js';
 
 const ACCOUNT_TYPES = ['checking', 'savings', 'cash', 'credit', 'other'];
 const security = [{ bearerAuth: [] }];
@@ -227,6 +228,52 @@ export function ledgerRoutes(app) {
     return { ok: true };
   });
 
+  // Saves the order of groups and of the categories inside them. A category
+  // listed under a different group than before moves to that group.
+  app.put('/categories/order', {
+    schema: {
+      tags: ['Lookups'], summary: 'Reorder category groups and categories', security,
+      body: {
+        type: 'object', additionalProperties: false, required: ['groups'],
+        properties: {
+          groups: {
+            type: 'array', maxItems: 500,
+            description: 'Groups in display order, each with the ids of its categories in display order.',
+            items: {
+              type: 'object', additionalProperties: false, required: ['id', 'categories'],
+              properties: { id: { type: 'integer' }, categories: { type: 'array', maxItems: 2000, items: { type: 'integer' } } },
+            },
+          },
+        },
+      },
+    },
+  }, async (request) => {
+    const budget = budgetOf(request);
+    const { groups } = request.body;
+    const ids = (table) => new Set(db.prepare(`SELECT id FROM ${table} WHERE budget_id = ?`).all(budget.id).map((r) => r.id));
+    const knownGroups = ids('category_groups');
+    const knownCategories = ids('categories');
+    const seen = new Set();
+    const check = (kind, known, id) => {
+      if (!known.has(id)) throw new HttpError(400, 'unknown_id', `There is no ${kind} with id ${id} in this budget.`);
+      if (seen.has(`${kind}${id}`)) throw new HttpError(400, 'duplicate_id', `The ${kind} with id ${id} is listed more than once.`);
+      seen.add(`${kind}${id}`);
+    };
+    for (const g of groups) {
+      check('group', knownGroups, g.id);
+      for (const c of g.categories) check('category', knownCategories, c);
+    }
+    db.transaction(() => {
+      const setGroup = db.prepare('UPDATE category_groups SET sort = ? WHERE id = ?');
+      const setCategory = db.prepare('UPDATE categories SET group_id = ?, sort = ? WHERE id = ?');
+      groups.forEach((g, gi) => {
+        setGroup.run(gi, g.id);
+        g.categories.forEach((c, ci) => setCategory.run(g.id, ci, c));
+      });
+    })();
+    return { ok: true };
+  });
+
   app.get('/payees', async (request) => {
     const budget = budgetOf(request);
     return db.prepare(
@@ -404,6 +451,15 @@ export function ledgerRoutes(app) {
     reply.header('Content-Type', 'text/csv; charset=utf-8');
     reply.header('Content-Disposition', 'attachment; filename="transactions.csv"');
     return lines.join('\n') + '\n';
+  });
+
+  // The whole budget as one JSON document; POST /budgets/import reads it back.
+  app.get('/export/budget.json', {
+    schema: { tags: ['Backup'], summary: 'Export the whole budget as JSON', security },
+  }, async (request, reply) => {
+    const budget = budgetOf(request);
+    reply.header('Content-Disposition', 'attachment; filename="knab-budget.json"');
+    return exportBudget(db, budget);
   });
 
   // ---- Recurring ----

@@ -138,9 +138,13 @@ Do not add any other fields.
 
 | Method and path | Purpose |
 |---|---|
+| `GET /export/budget.json` | The whole budget as one JSON document (format `knab-budget`, version 1) |
+| `POST /budgets/import` | Creates a new budget from that document. Needs a signed-in session, not a token. Never changes an existing budget |
+| `GET /manual` | The user manual as Markdown. No token needed |
 | `GET /accounts` | Accounts with balances |
 | `GET /categories` | Category groups and categories |
 | `GET /transactions?account=&category=&flag=&from=&to=&q=&limit=&offset=` | List transactions, newest first |
+| `PUT /categories/order` | `{"groups": [{"id": 2, "categories": [7, 5]}, ...]}` saves the order of groups and categories; a category listed under another group moves there |
 | `GET /flags` | Flags with their colour and how many transactions use each |
 | `POST /flags` | `{"name": "To reimburse", "color": "teal"}`. Colours: red, orange, yellow, green, blue, purple, pink, teal, gray |
 | `PATCH /flags/{id}`, `DELETE /flags/{id}` | Rename or recolour a flag; remove it (its transactions become unflagged) |
@@ -157,6 +161,8 @@ Do not add any other fields.
 | `GET /reports/age?count=6` | Age of money at the end of each period |
 
 ## Command-line client
+
+For Claude and other MCP clients, see [MCP.md](MCP.md): `knab mcp` runs a Model Context Protocol server over the same API.
 
 `bin/knab.js` wraps the API for scripts and for models that run shell commands.
 It needs only Node.js; copy the single file anywhere or run `npm link` in the

@@ -8,7 +8,8 @@
     "node": ">=22"
   },
   "bin": {
-    "knab": "bin/knab.js"
+    "knab": "bin/knab.js",
+    "knab-mcp": "bin/knab-mcp.js"
   },
   "scripts": {
     "dev": "concurrently -k -n api,web \"node --watch server/index.js\" \"vite\"",

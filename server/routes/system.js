@@ -4,6 +4,7 @@ import {
   authenticate, requireSession, requireAdmin,
 } from '../auth.js';
 import { DEFAULT_FLAGS } from '../../shared/flags.js';
+import { importBudget } from '../portable.js';
 import { HttpError, sha256, newToken } from '../util.js';
 
 const credentials = {
@@ -211,6 +212,17 @@ export function systemRoutes(app) {
   });
 
   // Changing cutoff_day needs no data migration: periods are computed on read.
+  // Creates a new budget from an exported file. It never touches an existing
+  // budget, and needs a signed-in user: an API token is tied to one budget.
+  app.post('/budgets/import', { bodyLimit: 64 * 1024 * 1024 }, async (request, reply) => {
+    requireSession(request);
+    const id = importBudget(db, request.user.id, request.body);
+    const b = db.prepare('SELECT b.*, u.username AS owner FROM budgets b JOIN users u ON u.id = b.owner_id WHERE b.id = ?').get(id);
+    const count = (table) => db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE budget_id = ?`).get(id).n;
+    reply.code(201);
+    return { ...budgetShape(b, request.user.id), imported: { accounts: count('accounts'), categories: count('categories'), transactions: count('transactions') } };
+  });
+
   app.patch('/budgets/:id', {
     schema: { body: { type: 'object', additionalProperties: false, properties: budgetBody } },
   }, async (request) => {

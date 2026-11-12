@@ -90,6 +90,16 @@ copy to `backups/` while the server is running and keeps the newest 14.
 To restore, stop the service, copy a backup over `data/knab.sqlite`, delete any
 `data/knab.sqlite-wal` and `data/knab.sqlite-shm` files, and start it again.
 
+A single budget can also be backed up and restored from inside the app, under
+Settings > Budgets and data: "Export budget" downloads it as one JSON file, and
+"Import budget" creates a new budget from such a file. That needs no server
+access, but it covers one budget at a time and leaves out users, sharing and
+API tokens. Use the database backup above for the whole server.
+
+## Using Knab
+
+[docs/MANUAL.md](docs/MANUAL.md) is the user manual: how to do everyday things, written as questions and answers so an AI assistant can look things up in it too. A running server also serves it at `/api/v1/manual`.
+
 ## How the budget works
 
 - **Ready to Assign** is money you have that is not yet in a category. Income

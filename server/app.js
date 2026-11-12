@@ -98,6 +98,11 @@ export async function buildApp({ db, config }) {
       api.get('/schema/transfer', async () => schemas.transferCreate);
       api.get('/schema/recurring', async () => schemas.recurringCreate);
       api.get('/openapi.json', async () => app.swagger());
+      // The user manual, as Markdown. Public: it describes the app, not anyone's data.
+      api.get('/manual', async (request, reply) => {
+        reply.header('Content-Type', 'text/markdown; charset=utf-8');
+        return fs.promises.readFile(path.join(ROOT, 'docs', 'MANUAL.md'), 'utf8');
+      });
 
       await api.register(async (secure) => {
         secure.addHook('onRequest', authenticate(app));

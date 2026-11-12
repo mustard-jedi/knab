@@ -25,6 +25,7 @@ Commands
   budget      Show the budget [--period YYYY-MM]
   recent      List recent transactions [--limit 20]
   schema      Print the JSON Schema for "add"
+  mcp         Run as a Model Context Protocol server on stdio (for Claude and other MCP clients)
 
 Configuration
   KNAB_URL    Server address (default http://localhost:3000)
@@ -113,6 +114,12 @@ switch (command) {
   case 'recent':
     print((await call('GET', `/transactions?limit=${args.limit ? number('limit') : 20}`)).transactions);
     break;
+  case 'mcp': {
+    // Lives in its own file so this one stays copyable on its own.
+    const { runStdio } = await import('./knab-mcp.js').catch(() => fail('knab mcp needs knab-mcp.js next to knab.js.'));
+    runStdio();
+    break;
+  }
   case 'schema':
     print(await call('GET', '/schema/transaction', null, false));
     break;

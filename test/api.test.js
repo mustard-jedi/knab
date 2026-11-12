@@ -221,6 +221,103 @@ test('recurring transactions post when due and stop at the end date', async () =
   assert.equal(past.body.schedule, null);
 });
 
+test('categories and groups can be reordered and moved between groups', async () => {
+  const { dad, client, dadCookie } = await setup();
+  const before = (await dad('GET', '/categories')).body;
+  const [first, second] = before;
+  const moved = first.categories[0];
+  const layout = [
+    { id: second.id, categories: [moved.id, ...second.categories.map((c) => c.id).reverse()] },
+    { id: first.id, categories: first.categories.slice(1).map((c) => c.id) },
+    ...before.slice(2).map((g) => ({ id: g.id, categories: g.categories.map((c) => c.id) })),
+  ];
+  assert.equal((await dad('PUT', '/categories/order', { groups: layout })).status, 200);
+  const after = (await dad('GET', '/categories')).body;
+  assert.deepEqual(after.map((g) => g.id), layout.map((g) => g.id));
+  assert.deepEqual(after[0].categories.map((c) => c.id), layout[0].categories);
+  assert.deepEqual((await dad('GET', '/budget')).body.groups[0].categories.map((c) => c.id), layout[0].categories);
+
+  assert.equal((await dad('PUT', '/categories/order', { groups: [{ id: first.id, categories: [moved.id, moved.id] }] })).body.error, 'duplicate_id');
+  // Ids from another budget are refused.
+  const other = await client(dadCookie)('POST', '/budgets', { name: 'Other' });
+  const foreign = (await client(dadCookie, other.body.id)('GET', '/categories')).body[0];
+  assert.equal((await dad('PUT', '/categories/order', { groups: [{ id: foreign.id, categories: [] }] })).body.error, 'unknown_id');
+  assert.equal((await dad('PUT', '/categories/order', { groups: [{ id: first.id, categories: [foreign.categories[0].id] }] })).body.error, 'unknown_id');
+});
+
+test('a budget survives export and import intact', async () => {
+  const { dad, client, dadCookie, budgetId, app, anon } = await setup();
+  await dad('POST', '/accounts', { name: 'Checking', opening_balance: 1000, opening_date: '2026-01-01' });
+  await dad('POST', '/accounts', { name: 'Visa', type: 'credit', opening_balance: -200, opening_date: '2026-01-01' });
+  await dad('POST', '/flags', { name: 'Owed', color: 'teal' });
+  await dad('POST', '/transactions', { date: '2026-01-25', amount: 60, type: 'expense', account: 'Checking', category: 'Groceries', payee: 'Market', memo: 'weekly', cleared: true, flag: 'Owed' });
+  await dad('POST', '/transactions', { date: '2026-01-26', amount: 2000, type: 'income', account: 'Checking', payee: 'Employer' });
+  await dad('POST', '/transfers', { date: '2026-01-27', amount: 150, from_account: 'Checking', to_account: 'Visa', memo: 'card' });
+  await dad('PUT', '/budget/assign', { category: 'Groceries', period: '2026-01', amount: 300 });
+  await dad('POST', '/recurring', { date: '2099-01-31', amount: 15, type: 'expense', account: 'Visa', category: 'Internet', frequency: 'monthly' });
+  const hide = (await dad('GET', '/categories')).body[0].categories[1];
+  await dad('PATCH', `/categories/${hide.id}`, { hidden: true });
+
+  const file = (await dad('GET', '/export/budget.json')).body;
+  assert.deepEqual([file.format, file.version, file.budget.cutoff_day], ['knab-budget', 1, 23]);
+  assert.equal(JSON.stringify(file).includes('"id"'), false);
+
+  const me = client(dadCookie);
+  const imported = await me('POST', '/budgets/import', file);
+  assert.equal(imported.status, 201);
+  assert.equal(imported.body.name, 'Home (imported)');
+  assert.notEqual(imported.body.id, budgetId);
+  assert.deepEqual(imported.body.imported, { accounts: 2, categories: 10, transactions: 6 });
+  assert.equal((await me('POST', '/budgets/import', file)).body.name, 'Home (imported 2)');
+
+  // Everything that matters reads the same from the copy as from the original.
+  const copy = client(dadCookie, imported.body.id);
+  const strip = (v) => JSON.parse(JSON.stringify(v, (k, x) => (['id', 'recurring_id', 'exported_at', 'name'].includes(k) && typeof x !== 'string' ? undefined : x)));
+  const same = async (url) => assert.deepEqual(strip((await copy('GET', url)).body), strip((await dad('GET', url)).body), url);
+  await same('/accounts');
+  await same('/categories');
+  await same('/flags');
+  await same('/transactions?limit=100');
+  await same('/budget?period=2026-01');
+  await same('/recurring');
+  const again = (await copy('GET', '/export/budget.json')).body;
+  assert.deepEqual({ ...again, exported_at: 0, budget: 0 }, { ...file, exported_at: 0, budget: 0 });
+
+  // The original is untouched, and editing a transfer in the copy moves both sides.
+  assert.equal((await dad('GET', '/transactions?limit=100')).body.total, 6);
+  const transfer = (await copy('GET', '/transactions?account=Visa')).body.transactions.find((t) => t.type === 'transfer');
+  await copy('PATCH', `/transactions/${transfer.id}`, { amount: 175 });
+  assert.equal((await copy('GET', '/accounts')).body.find((a) => a.name === 'Checking').balance, 1000 - 60 + 2000 - 175);
+
+  // Bad files are refused whole, with a message that says what is wrong.
+  const before = (await me('GET', '/budgets')).body.length;
+  const refuse = async (change, pattern) => {
+    const broken = structuredClone(file);
+    change(broken);
+    const res = await me('POST', '/budgets/import', broken);
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error, 'invalid_import');
+    assert.match(res.body.message, pattern);
+  };
+  await refuse((f) => { f.format = 'something-else'; }, /not a Knab budget file/);
+  await refuse((f) => { f.version = 99; }, /version 99/);
+  await refuse((f) => { f.transactions[1].account = 'Nowhere'; }, /Transaction 2 refers to the account "Nowhere"/);
+  await refuse((f) => { f.transactions[1].category = 'Nope'; }, /category "Nope"/);
+  await refuse((f) => { f.transactions[0].date = '2026-02-30'; }, /Transaction 1: the date/);
+  await refuse((f) => { f.accounts.push({ name: 'checking' }); }, /account "checking" appears more than once/);
+  await refuse((f) => { f.transactions.find((t) => t.transfer_ref).amount = 1; }, /opposite amounts/);
+  await refuse((f) => { f.transactions.find((t) => t.transfer_ref).transfer_ref = 999; }, /no matching other side/);
+  await refuse((f) => { f.flags[0].color = 'beige'; }, /colour must be one of/);
+  assert.equal((await me('GET', '/budgets')).body.length, before);
+
+  // Importing needs a signed-in user; a token for one budget cannot create another.
+  assert.equal((await anon('POST', '/budgets/import', file)).status, 401);
+  const token = (await me('POST', '/tokens', { name: 't', budget_id: budgetId })).body.token;
+  const viaToken = await app.inject({ method: 'POST', url: '/api/v1/budgets/import', payload: file, headers: { authorization: `Bearer ${token}` } });
+  assert.equal(viaToken.statusCode, 403);
+  assert.equal((await me('GET', '/budgets')).body.length, before);
+});
+
 test('flags: add, use, filter, rename and remove', async () => {
   const { dad } = await setup();
   await dad('POST', '/accounts', { name: 'Checking', opening_balance: 100 });

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { periodFor, periodTitle, todayStr } from '../../../shared/periods.js';
 import { api, download } from '../api.js';
 import { useApp } from '../state.jsx';
@@ -153,6 +153,7 @@ function Tokens() {
         <pre className="overflow-x-auto rounded-lg bg-sunken p-3 text-xs">{example}</pre>
         <p className="mt-2 text-sm text-muted">
           Full reference: <a className="text-accent underline" href="/api/docs" target="_blank" rel="noreferrer">API documentation</a> ·{' '}
+          <a className="text-accent underline" href="/api/v1/manual" target="_blank" rel="noreferrer">User manual</a> ·{' '}
           <a className="text-accent underline" href="/api/v1/schema/transaction" target="_blank" rel="noreferrer">transaction JSON Schema</a>
         </p>
       </div>
@@ -248,6 +249,24 @@ function BudgetsAndData() {
   const { budget, loadBudgets } = useApp();
   const [creating, setCreating] = useState(false);
   const [exportCsv, exporting, exportError] = useAction(() => download('/export/transactions.csv', `${budget.name}-transactions.csv`));
+  const [exportJson, exportingJson, exportJsonError] = useAction(() => download('/export/budget.json', `${budget.name}-${todayStr()}.knab.json`));
+  const fileInput = useRef(null);
+  const [imported, setImported] = useState(null);
+  const [importFile, importing, importError] = useAction(async (e) => {
+    const file = e.target.files[0];
+    e.target.value = ''; // so the same file can be chosen again
+    if (!file) return;
+    setImported(null);
+    let data;
+    try {
+      data = JSON.parse(await file.text());
+    } catch {
+      throw new Error('That file is not valid JSON. Choose a file made with "Export budget".');
+    }
+    const created = await api('POST', '/budgets/import', data);
+    setImported(created);
+    await loadBudgets(created.id);
+  });
   const [remove, , removeError] = useAction(async () => {
     const typed = window.prompt(`This permanently deletes “${budget.name}” and all its accounts and transactions. Type the budget name to confirm:`);
     if (typed === null) return;
@@ -260,9 +279,18 @@ function BudgetsAndData() {
       <div className="flex flex-wrap gap-3">
         <button className="btn" onClick={() => setCreating(true)}>New budget</button>
         <button className="btn" onClick={exportCsv} disabled={exporting}>Export transactions (CSV)</button>
+        <button className="btn" onClick={exportJson} disabled={exportingJson}>Export budget (backup file)</button>
+        <button className="btn" onClick={() => fileInput.current.click()} disabled={importing}>{importing ? 'Importing…' : 'Import budget…'}</button>
+        <input ref={fileInput} type="file" accept=".json,application/json" className="hidden" onChange={importFile} aria-label="Budget backup file" />
         {budget.is_owner && <button className="btn btn-danger" onClick={remove}>Delete this budget</button>}
       </div>
-      <ErrorNote error={exportError || removeError} />
+      <p className="mt-3 text-xs text-muted">The backup file holds this whole budget: accounts, categories, flags, transactions, assigned amounts and recurring transactions. Importing one always creates a new budget and never changes an existing one. Sharing and API tokens are not included.</p>
+      {imported && (
+        <p role="status" className="mt-3 rounded-lg bg-pos-bg px-3 py-2 text-sm text-pos">
+          Imported “{imported.name}”: {imported.imported.accounts} accounts, {imported.imported.categories} categories and {imported.imported.transactions} transactions. You are now looking at it.
+        </p>
+      )}
+      <ErrorNote error={exportError || exportJsonError || importError || removeError} />
       {creating && (
         <Modal title="New budget" onClose={() => setCreating(false)}>
           <NewBudgetForm onDone={() => setCreating(false)} />
