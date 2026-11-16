@@ -195,7 +195,11 @@ export function planningRoutes(app) {
         net_worth: fromCents(assets + debts),
       });
     }
-    return { periods };
+    // Installments marked as debt that have not been charged to an account yet.
+    const committed = db.prepare(
+      'SELECT COALESCE(SUM(remaining * -amount), 0) AS n FROM recurring WHERE budget_id = ? AND is_debt = 1 AND amount < 0 AND remaining IS NOT NULL',
+    ).get(budget.id).n;
+    return { periods, committed_debt: fromCents(committed) };
   });
 
   const labelRange = (query, budget, maxCount = 36) => {

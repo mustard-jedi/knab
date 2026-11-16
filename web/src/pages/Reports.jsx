@@ -354,6 +354,12 @@ function NetWorth() {
                 <Stat label="Change over these periods"><Delta value={overall} percent={first.net_worth ? (overall / Math.abs(first.net_worth)) * 100 : null} /></Stat>
               </div>
             </div>
+            {data.committed_debt > 0 && (
+              <p className="mb-4 rounded-lg bg-sunken px-3 py-2 text-sm">
+                Not included above: <Money value={data.committed_debt} className="font-semibold" /> committed in installments that are not charged to an account yet (see <Link className="text-accent underline" to="/forecast">Forecast</Link>).
+                Counting it, net worth is <Money value={last.net_worth - data.committed_debt} signed className="font-semibold" />.
+              </p>
+            )}
             <WorthChart points={points} />
           </div>
           <div className="card overflow-x-auto">

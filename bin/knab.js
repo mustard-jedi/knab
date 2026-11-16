@@ -67,7 +67,7 @@ async function call(method, route, body, needsToken = true) {
     fail(`Could not reach ${url}: ${err.cause?.message || err.message}`);
   }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) fail(`Error (${data.error || res.status}): ${data.message || res.statusText}`);
+  if (!res.ok) fail(`Error (${data.error || res.status}): ${data.message || res.statusText}${data.hint ? `\n${data.hint}` : ''}`);
   return data;
 }
 

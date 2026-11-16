@@ -133,7 +133,7 @@ export default function Transactions() {
       <div className="mb-3 space-y-3">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <button className="link-btn hidden md:inline-flex" onClick={() => openTxForm({ defaults: { account: info?.name, category } })}><Icon name="plus" size={16} /> Add transaction</button>
-          <Link className="link-btn" to="/scheduled"><Icon name="repeat" size={16} /> Scheduled</Link>
+          <Link className="link-btn" to="/forecast"><Icon name="forecast" size={16} /> Forecast</Link>
           <select className="input w-auto md:hidden" value={info?.name || ''} onChange={(e) => update({ account: e.target.value })} aria-label="Account">
             <option value="">All accounts</option>
             {(accounts || []).map((a) => <option key={a.id} value={a.name}>{a.name}</option>)}
@@ -141,7 +141,7 @@ export default function Transactions() {
           <button type="button" className="link-btn" onClick={() => setManagingFlags(true)}><Icon name="flag" size={16} /> Flags</button>
           <select className="input w-auto max-w-40" value={flags.some((f) => f.name === flag) ? flag : ''} onChange={(e) => update({ flag: e.target.value })} aria-label="Flag">
             <option value="">All flags</option>
-            {flags.map((f) => <option key={f.id} value={f.name}>{f.name}</option>)}
+            {flags.map((f) => <option key={f.id} value={f.name}>{f.name}{f.count ? ` (${f.count})` : ''}</option>)}
           </select>
           <select className="input w-auto" value={all ? 'all' : isPeriod ? 'period' : 'custom'} aria-label="Dates"
             onChange={(e) => {

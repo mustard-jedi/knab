@@ -112,8 +112,8 @@ wrong, the valid names are included so the caller can retry:
 | `validation_error` | Missing field, unknown field, wrong type, or `type` not `expense`/`income` |
 | `unknown_account` | No account with that name (see `valid_accounts`) |
 | `unknown_flag` | No flag with that name (see `valid_flags`) |
-| `unknown_category` | No category with that name (see `valid_categories`) |
-| `category_required` | An expense was sent without a category (see `valid_categories`) |
+| `unknown_category` | No category with that name (see `valid_categories`). Also carries `hint` (what an unattended agent should do) and `review_flag` (the flag to put on a guessed category, when the budget has one) |
+| `category_required` | An expense was sent without a category (see `valid_categories`, `hint`, `review_flag`) |
 | `invalid_amount` | More than 2 decimal places |
 | `invalid_date` | Not a real `YYYY-MM-DD` date |
 
@@ -131,6 +131,8 @@ Fields:
 - "category": one of [Groceries, Dining Out, Transport, ...]; omit for income
 - "payee": short name of the shop or person (optional)
 - "date": YYYY-MM-DD, only if the user gave a date
+If no category in the list fits exactly, use the closest one and also add
+"flag": "To review" and "memo": the user's own words for it.
 Do not add any other fields.
 ```
 
@@ -140,6 +142,10 @@ Do not add any other fields.
 |---|---|
 | `GET /export/budget.json` | The whole budget as one JSON document (format `knab-budget`, version 1) |
 | `POST /budgets/import` | Creates a new budget from that document. Needs a signed-in session, not a token. Never changes an existing budget |
+| `GET /forecast?periods=12` | Planned expenses and income per upcoming period, with occurrences, assigned amounts and a summary |
+| `GET /recurring`, `POST /recurring`, `PATCH /recurring/{id}`, `DELETE /recurring/{id}` | Planned items: recurring transactions, installments and one-offs. Extra fields: `name`, `auto`, `payments`, `payments_left`, `is_debt` |
+| `POST /recurring/{id}/enter` | Turn the next occurrence into a transaction; optional `amount`, `date`, `memo`, `cleared`, `flag` for that one entry |
+| `POST /recurring/{id}/skip`, `POST /recurring/enter-due` | Skip the next occurrence; enter every waiting occurrence due today or overdue |
 | `GET /manual` | The user manual as Markdown. No token needed |
 | `GET /accounts` | Accounts with balances |
 | `GET /categories` | Category groups and categories |
@@ -147,7 +153,7 @@ Do not add any other fields.
 | `PUT /categories/order` | `{"groups": [{"id": 2, "categories": [7, 5]}, ...]}` saves the order of groups and categories; a category listed under another group moves there |
 | `GET /flags` | Flags with their colour and how many transactions use each |
 | `POST /flags` | `{"name": "To reimburse", "color": "teal"}`. Colours: red, orange, yellow, green, blue, purple, pink, teal, gray |
-| `PATCH /flags/{id}`, `DELETE /flags/{id}` | Rename or recolour a flag; remove it (its transactions become unflagged) |
+| `PATCH /flags/{id}`, `DELETE /flags/{id}` | Rename or recolour a flag, or send `{"review": true}` to make it the budget's review flag; remove it (its transactions become unflagged) |
 | `PATCH /transactions/{id}` | Change a transaction (send only the fields to change) |
 | `DELETE /transactions/{id}` | Delete a transaction |
 | `POST /transfers` | Move money: `{"amount": 100, "from_account": "Checking", "to_account": "Savings"}` |

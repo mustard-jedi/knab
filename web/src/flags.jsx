@@ -98,6 +98,10 @@ function FlagRow({ flag }) {
         <span className="num w-10 shrink-0 text-right text-xs text-muted" title="Transactions using this flag">{flag.count}</span>
         <button type="button" className="btn btn-ghost shrink-0 px-2 text-neg" onClick={remove} disabled={removing} aria-label={`Remove ${flag.name}`}><Icon name="close" size={18} /></button>
       </div>
+      <label className="mt-1.5 flex cursor-pointer items-center gap-2 pl-1 text-xs text-muted">
+        <input type="checkbox" className="size-4 accent-(--accent)" checked={flag.review} onChange={(e) => patch({ review: e.target.checked })} />
+        Review flag{flag.review && ': AI assistants put it on transactions whose category they had to guess'}
+      </label>
       {picking && <div className="mt-2 pl-1"><Palette value={flag.color} onChange={(color) => { setPicking(false); if (color !== flag.color) patch({ color }); }} /></div>}
       <div className="mt-1"><ErrorNote error={error || removeError} /></div>
     </li>
@@ -120,7 +124,7 @@ export function FlagManager({ onClose }) {
   });
   return (
     <Modal title="Flags" onClose={onClose}>
-      <p className="mb-2 text-sm text-muted">Add as many flags as you need, rename or recolour them, or remove the ones you do not use. The number is how many transactions carry the flag.</p>
+      <p className="mb-2 text-sm text-muted">Add as many flags as you need, rename or recolour them, or remove the ones you do not use. The number is how many transactions carry the flag. One flag can be the review flag, which AI assistants use to mark a category they guessed.</p>
       <ErrorNote error={error} />
       {flags && !flags.length && <p className="py-3 text-sm text-muted">No flags yet.</p>}
       <ul className="divide-y divide-line">{(flags || []).map((f) => <FlagRow key={f.id} flag={f} />)}</ul>

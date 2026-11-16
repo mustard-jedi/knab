@@ -14,6 +14,7 @@ import * as schemas from './schemas.js';
 import { publicRoutes, systemRoutes } from './routes/system.js';
 import { ledgerRoutes } from './routes/ledger.js';
 import { planningRoutes } from './routes/planning.js';
+import { plannedRoutes } from './routes/planned.js';
 
 // Turns Ajv errors into one plain sentence per problem.
 function describeValidation(errors, where) {
@@ -109,6 +110,7 @@ export async function buildApp({ db, config }) {
         systemRoutes(secure);
         ledgerRoutes(secure);
         planningRoutes(secure);
+        plannedRoutes(secure);
       });
     }, { prefix: '/api/v1' });
 

@@ -3,10 +3,10 @@ import { resolveBudget } from '../auth.js';
 import { HttpError, toCents, fromCents, assertDate } from '../util.js';
 import * as schemas from '../schemas.js';
 import {
-  TX_SELECT, txShape, findAccount, findCategory, findFlag, resolveEntry, insertTransaction,
-  createTransaction, updateTransaction, deleteTransaction, createTransfer, postDueRecurring,
+  TX_SELECT, txShape, findAccount, findCategory, findFlag, insertTransaction,
+  createTransaction, updateTransaction, deleteTransaction, createTransfer,
 } from '../ledger.js';
-import { todayStr, parseDate, nextOccurrence } from '../../shared/periods.js';
+import { todayStr } from '../../shared/periods.js';
 import { FLAG_COLORS } from '../../shared/flags.js';
 import { exportBudget } from '../portable.js';
 
@@ -288,8 +288,10 @@ export function ledgerRoutes(app) {
     name: { type: 'string', minLength: 1, maxLength: 40, description: 'Flag name, unique within the budget.' },
     color: { type: 'string', enum: Object.keys(FLAG_COLORS), description: 'Colour of the flag.' },
   };
+  const reviewField = { review: { type: 'boolean', description: 'true makes this the flag AI agents put on transactions whose category they guessed. Only one flag per budget has it.' } };
+  const flagShape = (f) => ({ ...f, review: Boolean(f.review) });
   const flagOf = (budgetId, id) => {
-    const row = db.prepare('SELECT id, name, color FROM flags WHERE id = ? AND budget_id = ?').get(id, budgetId);
+    const row = db.prepare('SELECT id, name, color, review FROM flags WHERE id = ? AND budget_id = ?').get(id, budgetId);
     if (!row) throw new HttpError(404, 'flag_not_found', 'No such flag.');
     return row;
   };
@@ -299,9 +301,9 @@ export function ledgerRoutes(app) {
   }, async (request) => {
     const budget = budgetOf(request);
     return db.prepare(
-      `SELECT f.id, f.name, f.color, (SELECT COUNT(*) FROM transactions t WHERE t.flag_id = f.id) AS count
+      `SELECT f.id, f.name, f.color, f.review, (SELECT COUNT(*) FROM transactions t WHERE t.flag_id = f.id) AS count
        FROM flags f WHERE f.budget_id = ? ORDER BY f.sort, f.id`,
-    ).all(budget.id);
+    ).all(budget.id).map(flagShape);
   });
 
   app.post('/flags', {
@@ -319,21 +321,26 @@ export function ledgerRoutes(app) {
       id = db.prepare('INSERT INTO flags (budget_id, name, color, sort) VALUES (?, ?, ?, ?)').run(budget.id, name, request.body.color, sort).lastInsertRowid;
     } catch (err) { conflict(err, `There is already a flag named "${name}".`); }
     reply.code(201);
-    return { id, name, color: request.body.color, count: 0 };
+    return { id, name, color: request.body.color, review: false, count: 0 };
   });
 
   app.patch('/flags/:id', {
-    schema: { tags: ['Flags'], summary: 'Rename or recolour a flag', security, body: { type: 'object', additionalProperties: false, properties: flagBody } },
+    schema: { tags: ['Flags'], summary: 'Rename or recolour a flag', security, body: { type: 'object', additionalProperties: false, properties: { ...flagBody, ...reviewField } } },
   }, async (request) => {
     const budget = budgetOf(request);
     const current = flagOf(budget.id, request.params.id);
+    const review = request.body.review ?? Boolean(current.review);
     const name = request.body.name !== undefined ? request.body.name.trim() : current.name;
     if (!name) throw new HttpError(400, 'invalid_name', '"name" must not be blank.');
     const color = request.body.color ?? current.color;
     try {
-      db.prepare('UPDATE flags SET name = ?, color = ? WHERE id = ?').run(name, color, current.id);
+      db.transaction(() => {
+        // Only one flag per budget is the review flag.
+        if (review) db.prepare('UPDATE flags SET review = 0 WHERE budget_id = ?').run(budget.id);
+        db.prepare('UPDATE flags SET name = ?, color = ?, review = ? WHERE id = ?').run(name, color, review ? 1 : 0, current.id);
+      })();
     } catch (err) { conflict(err, `There is already a flag named "${name}".`); }
-    return { id: current.id, name, color };
+    return { id: current.id, name, color, review };
   });
 
   // Transactions that carried the flag simply lose it.
@@ -460,109 +467,5 @@ export function ledgerRoutes(app) {
     const budget = budgetOf(request);
     reply.header('Content-Disposition', 'attachment; filename="knab-budget.json"');
     return exportBudget(db, budget);
-  });
-
-  // ---- Recurring ----
-
-  const RECURRING_SELECT = `
-    SELECT r.*, a.name AS account, c.name AS category FROM recurring r
-    JOIN accounts a ON a.id = r.account_id LEFT JOIN categories c ON c.id = r.category_id`;
-
-  const recurringShape = (r) => ({
-    id: r.id,
-    next_date: r.next_date,
-    amount: fromCents(Math.abs(r.amount)),
-    type: r.amount < 0 ? 'expense' : 'income',
-    account: r.account,
-    category: r.category ?? null,
-    payee: r.payee,
-    memo: r.memo,
-    frequency: r.frequency,
-    end_date: r.end_date ?? null,
-  });
-
-  const getRecurring = (budgetId, id) => {
-    const r = db.prepare(`${RECURRING_SELECT} WHERE r.id = ? AND r.budget_id = ?`).get(id, budgetId);
-    if (!r) throw new HttpError(404, 'recurring_not_found', 'No such recurring transaction.');
-    return r;
-  };
-
-  app.get('/recurring', {
-    schema: { tags: ['Recurring'], summary: 'List recurring transactions', security },
-  }, async (request) => {
-    const budget = budgetOf(request);
-    return db.prepare(`${RECURRING_SELECT} WHERE r.budget_id = ? ORDER BY r.next_date, r.id`).all(budget.id).map(recurringShape);
-  });
-
-  app.post('/recurring', {
-    schema: { tags: ['Recurring'], summary: 'Create a recurring transaction', security, body: schemas.recurringCreate, response: errors },
-  }, async (request, reply) => {
-    const budget = budgetOf(request);
-    const entry = resolveEntry(db, budget.id, request.body);
-    const endDate = request.body.end_date ? assertDate(request.body.end_date, 'end_date') : null;
-    const id = db.prepare(
-      `INSERT INTO recurring (budget_id, account_id, category_id, amount, payee, memo, frequency, next_date, anchor_day, end_date)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      budget.id, entry.account_id, entry.category_id, entry.amount, entry.payee, entry.memo,
-      request.body.frequency, entry.date, parseDate(entry.date).d, endDate,
-    ).lastInsertRowid;
-    const posted = postDueRecurring(db, todayStr(), budget.id);
-    const row = db.prepare(`${RECURRING_SELECT} WHERE r.id = ?`).get(id);
-    reply.code(201);
-    return { posted_now: posted, schedule: row ? recurringShape(row) : null };
-  });
-
-  app.patch('/recurring/:id', {
-    schema: { tags: ['Recurring'], summary: 'Change a recurring transaction', security, body: schemas.recurringUpdate, response: errors },
-  }, async (request) => {
-    const budget = budgetOf(request);
-    const current = recurringShape(getRecurring(budget.id, request.params.id));
-    const body = request.body;
-    const merged = {
-      date: body.date ?? current.next_date,
-      amount: body.amount ?? current.amount,
-      type: body.type ?? current.type,
-      account: body.account ?? current.account,
-      category: body.category ?? current.category ?? '',
-      payee: body.payee ?? current.payee,
-      memo: body.memo ?? current.memo,
-    };
-    const entry = resolveEntry(db, budget.id, merged);
-    const endDate = body.end_date === undefined ? current.end_date : body.end_date ? assertDate(body.end_date, 'end_date') : null;
-    db.prepare(
-      `UPDATE recurring SET account_id = ?, category_id = ?, amount = ?, payee = ?, memo = ?, frequency = ?,
-         next_date = ?, anchor_day = CASE WHEN ? THEN ? ELSE anchor_day END, end_date = ? WHERE id = ?`,
-    ).run(
-      entry.account_id, entry.category_id, entry.amount, entry.payee, entry.memo, body.frequency ?? current.frequency,
-      entry.date, body.date ? 1 : 0, parseDate(entry.date).d, endDate, current.id,
-    );
-    postDueRecurring(db, todayStr(), budget.id);
-    const row = db.prepare(`${RECURRING_SELECT} WHERE r.id = ?`).get(current.id);
-    return { schedule: row ? recurringShape(row) : null };
-  });
-
-  // Skips the next occurrence without posting it.
-  app.post('/recurring/:id/skip', {
-    schema: { tags: ['Recurring'], summary: 'Skip the next occurrence', security },
-  }, async (request) => {
-    const budget = budgetOf(request);
-    const r = getRecurring(budget.id, request.params.id);
-    const next = nextOccurrence(r.next_date, r.frequency, r.anchor_day);
-    if (r.end_date && next > r.end_date) {
-      db.prepare('DELETE FROM recurring WHERE id = ?').run(r.id);
-      return { schedule: null };
-    }
-    db.prepare('UPDATE recurring SET next_date = ? WHERE id = ?').run(next, r.id);
-    return { schedule: recurringShape(getRecurring(budget.id, r.id)) };
-  });
-
-  app.delete('/recurring/:id', {
-    schema: { tags: ['Recurring'], summary: 'Stop a recurring transaction', security },
-  }, async (request) => {
-    const budget = budgetOf(request);
-    const r = getRecurring(budget.id, request.params.id);
-    db.prepare('DELETE FROM recurring WHERE id = ?').run(r.id);
-    return { ok: true };
   });
 }

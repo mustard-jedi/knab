@@ -273,3 +273,73 @@ export function AgeChart({ points }) {
     </div>
   );
 }
+
+// The forecast "wave": planned expenses per period, stacked by kind, with
+// optional markers for expected income and for what is already assigned.
+// Clicking a period selects it.
+export function ForecastChart({ points, compare, selected, onSelect }) {
+  const [ref, width] = useWidth();
+  const [hover, setHover] = useState(null);
+  const tops = points.flatMap((p) => [p.total, ...(compare ? [p.income, p.assigned] : [])]);
+  const scale = axis(0, Math.max(1, ...tops));
+  const band = (width - PAD.left - PAD.right) / points.length;
+  const barW = Math.max(6, Math.min(44, band * 0.56));
+  const centre = (i) => PAD.left + band * (i + 0.5);
+  const active = hover !== null ? points[hover] : null;
+  const SERIES_OF = [['bills', 'var(--series-2)', 'Ongoing bills'], ['installments', 'var(--series-1)', 'Installments'], ['one_offs', 'var(--series-3)', 'One-offs']];
+  return (
+    <div>
+      <Legend items={[
+        ['var(--series-1)', 'Installments'], ['var(--series-2)', 'Ongoing bills'], ['var(--series-3)', 'One-offs'],
+        ...(compare ? [['var(--ink)', 'Expected income', true], ['var(--muted)', 'Already assigned', true]] : []),
+      ]} />
+      <div ref={ref} className="relative" onMouseLeave={() => setHover(null)}>
+        {width > 0 && (
+          <svg width={width} height={H} role="img" aria-label="Planned expenses for each upcoming period">
+            <Frame width={width} scale={scale} labels={points.map((p, i) => ({ x: centre(i), text: p.tick }))}>
+              {(y) => points.map((p, i) => {
+                let base = 0;
+                const parts = SERIES_OF.filter(([key]) => p[key] > 0);
+                return (
+                  <g key={p.label} onMouseEnter={() => setHover(i)} onClick={() => { setHover(i); onSelect(p.label); }} className="cursor-pointer">
+                    <rect x={PAD.left + band * i} y={PAD.top} width={band} height={H - PAD.top - PAD.bottom}
+                      fill={selected === p.label || hover === i ? 'var(--sunken)' : 'transparent'} />
+                    {parts.map(([key, color], n) => {
+                      const y0 = y(base);
+                      base += p[key];
+                      const y1 = y(base);
+                      // A 2px surface gap between segments; only the top one is rounded.
+                      const gap = n > 0 ? 2 : 0;
+                      if (y0 - gap - y1 < 1) return null;
+                      return n === parts.length - 1
+                        ? <path key={key} d={bar(centre(i) - barW / 2, barW, y0 - gap, y1)} fill={color} />
+                        : <rect key={key} x={centre(i) - barW / 2} y={y1} width={barW} height={y0 - gap - y1} fill={color} />;
+                    })}
+                    {compare && p.income > 0 && <line x1={centre(i) - band * 0.42} x2={centre(i) + band * 0.42} y1={y(p.income)} y2={y(p.income)} stroke="var(--ink)" strokeWidth="2" />}
+                    {compare && p.assigned > 0 && <line x1={centre(i) - band * 0.42} x2={centre(i) + band * 0.42} y1={y(p.assigned)} y2={y(p.assigned)} stroke="var(--muted)" strokeWidth="2" strokeDasharray="4 3" />}
+                    {selected === p.label && <rect x={PAD.left + band * i + 1} y={H - PAD.bottom + 1} width={band - 2} height="3" rx="1.5" fill="var(--accent)" />}
+                  </g>
+                );
+              })}
+            </Frame>
+          </svg>
+        )}
+        {active && (
+          <Tooltip x={centre(hover)} width={width}>
+            <div className="mb-1 font-semibold">{active.name}</div>
+            <Row label="Planned"><Money value={active.total} className="font-semibold" /></Row>
+            {SERIES_OF.slice().reverse().filter(([key]) => active[key] > 0).map(([key, color, text]) => (
+              <Row key={key} color={color} label={text}><Money value={active[key]} /></Row>
+            ))}
+            {compare && (
+              <div className="mt-1 border-t border-line pt-1">
+                <Row color="var(--ink)" line label="Expected income"><Money value={active.income} /></Row>
+                <Row color="var(--muted)" line label="Assigned"><Money value={active.assigned} /></Row>
+              </div>
+            )}
+          </Tooltip>
+        )}
+      </div>
+    </div>
+  );
+}

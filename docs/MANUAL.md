@@ -233,6 +233,27 @@ Each budget has its own list; add as many as you need. Nine colours are
 available. Removing a flag leaves its transactions unflagged; the number next
 to each flag shows how many transactions use it.
 
+### What is the review flag?
+
+One flag per budget can be marked as the review flag; new budgets come with one
+called "To review". When an AI assistant or script is told a category that does
+not exist and nobody is there to ask, it is instructed to use the closest real
+category, put the review flag on the transaction, and start the memo with the
+wording it was given, for example "Coffee". You then check those transactions
+and fix the category or remove the flag.
+
+### How do I change which flag is the review flag?
+
+Open Flags and tick "Review flag" on the one you want; the tick moves from the
+previous one. Untick it to have no review flag, in which case assistants mark
+their guesses in the memo only ("To review: Coffee").
+
+### How do I find the transactions an assistant guessed?
+
+Choose the review flag in the flag menu above the register, with the dates set
+to All dates. The number next to each flag in that menu is how many
+transactions carry it.
+
 ### How do I see only flagged transactions?
 
 Choose the flag in the "All flags" menu above the register.
@@ -307,27 +328,126 @@ after the one shown.
 
 No. Knab has no category targets, and no loan calculators.
 
-## Recurring transactions
+## Forecast: planned and recurring items
 
-### How do I make a transaction repeat?
+### What is the Forecast?
 
-Add a transaction and choose a **Repeat** frequency: every week, every 2 weeks,
-every month or every year. Optionally set an "Until" date. If the first date is
-today or earlier, it is entered straight away.
+A look ahead. You enter what you already know is coming (credit card
+installments, regular bills, one-off expenses, expected income) as **planned
+items**, and Forecast shows the total for each of the next 12 budget periods as
+a chart, so you can see the heavy periods coming and when the load eases.
+Planning something does not touch your accounts or your budget.
 
-### When are recurring transactions entered?
+### What kinds of planned item are there?
 
-Automatically on their date. The server checks when it starts and every hour.
-They arrive uncleared and without a flag.
+- **Installments**: a fixed number of payments, such as a 12-month card
+  installment. Knab shows "6 of 12" and the amount still to pay.
+- **Ongoing**: repeats with no end (or until a date you set), such as rent, a
+  subscription or salary.
+- **One time**: a single future payment, such as annual insurance.
 
-### How do I change, skip or stop one?
+Each can be an expense or income.
 
-Open **Scheduled**. "Skip next" skips the next occurrence; "Edit" changes the
-schedule, and "Stop" inside it ends the schedule. Entries already made stay.
+### How do I add a planned item?
 
-### Can a transfer repeat?
+Forecast > **+ Planned item**. Give it a name, the amount, how often it
+repeats, the next date, the account it will be charged to and its category. For
+an installment, enter the amount per payment and the number of payments, or
+type the total price and Knab works out the amount per payment.
 
-No. Recurring transfers are not supported.
+### How do I enter an installment that is already under way?
+
+Set "Number of payments" to the full count (12) and "Payments still to go" to
+what is left (7). The next payment date is the next one you have not paid yet.
+
+### What if I entered the wrong number of payments?
+
+Open the item from Forecast and change "Payments still to go". The remaining
+payments are re-planned; anything already entered as a transaction is not
+touched.
+
+### What is the difference between "Wait for me" and "Enter automatically"?
+
+- **Wait for me**: the payment stays in Forecast until you press **Enter now**.
+  If its date passes it is marked overdue; nothing is entered for you.
+- **Enter automatically**: Knab adds the transaction by itself on its date.
+  This is what a recurring transaction is. The server checks when it starts and
+  every hour; anything missed while it was off is entered the next time it runs.
+
+### What does "Enter now" do?
+
+It turns the next payment of a planned item into a real transaction. A small
+form opens with the planned amount and date so you can adjust them (a finance
+charge, a late posting) before saving. The transaction goes into the item's
+account and category, and the plan moves on to its next date. Changing the
+amount there affects only that one entry.
+
+### What does "Enter all due" do?
+
+It enters every waiting payment that is due today or overdue, each at its
+planned amount and date, after showing you the list. It never enters payments
+that are still in the future.
+
+### Why does a payment say "After the earlier one"?
+
+Payments of one item are entered in order. Enter or skip the earlier payment
+first.
+
+### How do I skip a payment?
+
+Press **Skip** next to it. No transaction is made, and for an installment it
+uses up one of the remaining payments.
+
+### How should I record a credit card installment?
+
+Do not enter the full purchase as a transaction. Add it to Forecast as an
+installment charged to the card account, with "Wait for me". Each month, when
+the installment appears on your statement, press Enter now. An ordinary
+one-time card purchase is still entered as a normal transaction.
+
+### What does "This is a debt I already owe" do?
+
+Tick it for installments that are already committed, such as a purchase already
+made on a card. What is still to pay is then counted in "Committed, not yet
+charged" on the Forecast page and noted under Net Worth in Reports. Leave it
+off for bills and plans you could still cancel.
+
+### Why is my card balance lower than what I really owe?
+
+An installment only reaches the card account as you enter each payment. The
+part not yet entered is shown as "Committed, not yet charged" in Forecast, and
+the Net Worth report shows net worth with and without it.
+
+### How do I read the chart?
+
+One bar per budget period, starting with the current one, stacked by kind:
+installments, ongoing bills and one-offs. Select a bar to list that period's
+items below. The current period shows only what is still to pay.
+
+### What does "Compare with income and assigned" show?
+
+Two markers on each bar: a solid line for the income you have planned in that
+period, and a dashed line for the money already assigned to categories in that
+period. Below the chart it says how much income is left after the plan and how
+much of the plan is not yet assigned. Untick it to hide both. Expected income
+comes only from planned income items, so add your salary as one.
+
+### What are the summary tiles?
+
+"This period, still to pay", the heaviest period in view, the committed debt,
+and "When it eases": the first period after the heaviest from which everything
+stays clearly lighter. Press **Summary** to fold them away or bring them back;
+the choice is remembered in that browser.
+
+### Where did Scheduled and recurring transactions go?
+
+They are part of Forecast now. A recurring transaction is a planned item set to
+"Enter automatically"; existing ones were carried over that way. Choosing a
+Repeat option while adding a transaction still creates one.
+
+### Can a transfer be planned or repeat?
+
+No. Planned transfers are not supported.
 
 ## Reports
 
@@ -470,7 +590,8 @@ browser.
 ### Does Knab work on a phone?
 
 Yes. Every screen is designed for a phone first and widens on a computer. On a
-phone the navigation is a bar at the bottom with the + button in the middle.
+phone the navigation is a bar at the bottom (Budget, Accounts, +, Forecast,
+Reports) and Settings is the gear icon at the top right.
 
 ### Which settings are per device and which are shared?
 
@@ -514,6 +635,16 @@ Settings > API tokens > Revoke. Anything using it stops working at once.
 
 ## Troubleshooting
 
+### What does an AI assistant do if I name a category that does not exist?
+
+Knab refuses the transaction and tells the assistant the valid categories. If
+you are in a conversation it should ask you which one you meant. If it is
+running on its own it picks the closest category and marks the transaction with
+the review flag and the original wording in the memo. It is told never to
+create a category and never to guess an account: an unknown account is always
+an error it must ask about. Knab can instruct an assistant but cannot force it,
+so a weak model may still pick a category without flagging it.
+
 ### Why did my expense get rejected?
 
 An expense needs a category, and account, category and flag names must match
@@ -536,9 +667,10 @@ Close an account rather than deleting it if it has history.
 
 ### Why is a recurring transaction missing?
 
-Check Scheduled: it may have been skipped, or have passed its Until date. The
-server must be running for entries to be made; anything missed is entered the
-next time it starts.
+Check Forecast: it may be set to "Wait for me" (press Enter now), have been
+skipped, or have passed its Until date. The server must be running for
+automatic entries to be made; anything missed is entered the next time it
+starts.
 
 ## Glossary
 
@@ -548,7 +680,9 @@ next time it starts.
 - **Cleared**: a transaction the bank has processed.
 - **Cutoff day / period start day**: the day of the month a budget period begins.
 - **Flag**: a coloured label on a transaction.
+- **Forecast**: the view of planned items over the coming periods.
 - **Group**: a heading that holds related categories.
+- **Planned item**: an installment, ongoing bill or income, or one-off that is expected but not yet a transaction.
 - **Period**: one budget "month", named `YYYY-MM` after the month it starts in.
 - **Ready to Assign**: money not yet in any category.
 - **Working balance**: cleared plus uncleared.

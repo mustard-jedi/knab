@@ -38,7 +38,8 @@ export function exportBudget(db, budget) {
       name: g.name,
       categories: categories.filter((c) => c.group_id === g.id).map((c) => ({ name: c.name, hidden: Boolean(c.hidden) })),
     })),
-    flags: all('SELECT name, color FROM flags WHERE budget_id = ? ORDER BY sort, id'),
+    flags: all('SELECT name, color, review FROM flags WHERE budget_id = ? ORDER BY sort, id')
+      .map((f) => ({ name: f.name, color: f.color, review: Boolean(f.review) })),
     transactions: transactions.map((t) => ({
       ref: ref.get(t.id),
       date: t.date,
@@ -57,12 +58,14 @@ export function exportBudget(db, budget) {
        WHERE s.budget_id = ? ORDER BY s.period, c.name`,
     ).map((s) => ({ category: s.category, period: s.period, amount: fromCents(s.amount) })),
     recurring: all(
-      `SELECT r.amount, r.payee, r.memo, r.frequency, r.next_date, r.anchor_day, r.end_date, a.name AS account, c.name AS category
+      `SELECT r.amount, r.payee, r.memo, r.frequency, r.next_date, r.anchor_day, r.end_date, r.name, r.auto, r.total_count, r.remaining, r.is_debt,
+              a.name AS account, c.name AS category
        FROM recurring r JOIN accounts a ON a.id = r.account_id LEFT JOIN categories c ON c.id = r.category_id
        WHERE r.budget_id = ? ORDER BY r.id`,
     ).map((r) => ({
       account: r.account, category: r.category ?? null, amount: fromCents(r.amount), payee: r.payee, memo: r.memo,
       frequency: r.frequency, next_date: r.next_date, anchor_day: r.anchor_day, end_date: r.end_date ?? null,
+      name: r.name, auto: Boolean(r.auto), payments: r.total_count ?? null, payments_left: r.remaining ?? null, is_debt: Boolean(r.is_debt),
     })),
   };
 }
@@ -85,6 +88,12 @@ const list = (value, name) => {
 };
 const day = (value, where) => {
   if (!isValidDate(value)) throw bad(`${where} must be a date in YYYY-MM-DD format.`);
+  return value;
+};
+// A payment count: a whole number from 1 to 600, or nothing (no end).
+const count = (value, where) => {
+  if (value === null || value === undefined) return null;
+  if (!Number.isInteger(value) || value < 1 || value > 600) throw bad(`${where} must be a whole number from 1 to 600.`);
   return value;
 };
 const money = (value, where) => {
@@ -159,12 +168,15 @@ export function importBudget(db, userId, data) {
     });
 
     const flags = new Map();
-    const addFlag = db.prepare('INSERT INTO flags (budget_id, name, color, sort) VALUES (?, ?, ?, ?)');
+    const addFlag = db.prepare('INSERT INTO flags (budget_id, name, color, sort, review) VALUES (?, ?, ?, ?, ?)');
+    let hasReview = false;
     list(data.flags, 'flags').forEach((f, i) => {
       const n = text(f?.name, `Flag ${i + 1}: the name`, { max: 40, required: true });
       unique(flags, 'flag', n);
       if (!Object.hasOwn(FLAG_COLORS, f.color)) throw bad(`Flag "${n}": the colour must be one of ${Object.keys(FLAG_COLORS).join(', ')}.`);
-      flags.set(key(n), addFlag.run(budgetId, n, f.color, i).lastInsertRowid);
+      const review = Boolean(f.review) && !hasReview; // at most one
+      hasReview ||= review;
+      flags.set(key(n), addFlag.run(budgetId, n, f.color, i, review ? 1 : 0).lastInsertRowid);
     });
 
     const addTx = db.prepare(
@@ -214,8 +226,9 @@ export function importBudget(db, userId, data) {
     });
 
     const addRecurring = db.prepare(
-      `INSERT INTO recurring (budget_id, account_id, category_id, amount, payee, memo, frequency, next_date, anchor_day, end_date)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO recurring (budget_id, account_id, category_id, amount, payee, memo, frequency, next_date, anchor_day, end_date,
+                              name, auto, total_count, remaining, is_debt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     list(data.recurring, 'recurring').forEach((r, i) => {
       const where = `Recurring transaction ${i + 1}`;
@@ -229,6 +242,8 @@ export function importBudget(db, userId, data) {
         budgetId, accountId, find(categories, 'category', r.category, where), money(r.amount, `${where}: the amount`),
         text(r.payee, `${where}: the payee`, { max: 200 }), text(r.memo, `${where}: the memo`), r.frequency, next, anchor,
         r.end_date ? day(r.end_date, `${where}: the end date`) : null,
+        text(r.name, `${where}: the name`, { max: 80 }), r.auto === false ? 0 : 1, count(r.payments, `${where}: payments`),
+        count(r.payments_left ?? r.payments, `${where}: payments left`), r.is_debt ? 1 : 0,
       );
     });
 

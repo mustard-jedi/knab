@@ -57,18 +57,29 @@ the command-line client.
 | `list_transactions` | Transactions, newest first, filtered by account, category, flag, dates or text |
 | `spending_report` | Spending per category and income per payee, per period |
 | `net_worth_report` | Income, spending, assets, debts and net worth per period |
+| `get_forecast` | Planned installments, bills, one-offs and income for the coming periods, with what is due now and the debt still committed |
 | `add_transaction` | Record an expense or income |
 | `add_transfer` | Move money between two accounts |
 | `update_transaction` | Change a transaction (by id) |
 | `assign_budget` | Set the amount assigned to a category for a period |
+| `add_planned_item` | Plan a future installment, bill, one-off or income in the forecast (creates no transaction) |
 
 There is deliberately no tool that deletes anything, and none for accounts,
 categories, users or settings.
 
+## When a category does not exist
+
+If Claude is given a category that is not in the budget, Knab refuses the
+transaction and replies with the valid categories. Claude is instructed to ask
+you when it can. When it cannot, it uses the closest category, puts the
+budget's review flag ("To review" by default) on the transaction and starts the
+memo with the wording it was given, so you can find and fix its guesses later.
+It is told never to invent a category and never to guess an account.
+
 ## Read-only mode
 
 Set `KNAB_MCP_READONLY=1` in the server's environment to leave out the last
-four tools (the ones that add or change data). Claude can then look but not change anything.
+five tools (the ones that add or change data). Claude can then look but not change anything.
 
 ## Things to know
 

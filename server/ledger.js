@@ -26,7 +26,7 @@ export function findCategory(db, budgetId, name) {
     400,
     'unknown_category',
     `There is no category named "${name}". Valid categories: ${valid.join(', ') || '(none yet)'}.`,
-    { field: 'category', valid_categories: valid },
+    { field: 'category', valid_categories: valid, ...reviewHint(db, budgetId) },
   );
 }
 
@@ -42,6 +42,19 @@ export function findFlag(db, budgetId, name) {
   );
 }
 
+// What an automated agent should do when it cannot ask a person which
+// category was meant. Sent as "hint" next to the category errors.
+function reviewHint(db, budgetId) {
+  const flag = db.prepare('SELECT name FROM flags WHERE budget_id = ? AND review = 1').get(budgetId);
+  const mark = flag
+    ? `set "flag" to "${flag.name}" and start "memo" with the wording you were given`
+    : 'start "memo" with "To review:" and the wording you were given';
+  return {
+    hint: `If a person is available, ask them which category they meant. If you are running unattended, retry with the valid category closest in meaning, ${mark}, so a person can check it later. Never invent a category name.`,
+    ...(flag ? { review_flag: flag.name } : {}),
+  };
+}
+
 // undefined = not sent; empty string = no flag.
 const flagIdOf = (db, budgetId, flag) => (flag && flag.trim() ? findFlag(db, budgetId, flag).id : null);
 
@@ -51,7 +64,7 @@ function categoryRequired(db, budgetId) {
     400,
     'category_required',
     `An expense needs a "category". Valid categories: ${valid.join(', ') || '(none yet)'}.`,
-    { field: 'category', valid_categories: valid },
+    { field: 'category', valid_categories: valid, ...reviewHint(db, budgetId) },
   );
 }
 
@@ -202,26 +215,55 @@ export function createTransfer(db, budgetId, userId, body) {
   return txShape(getTransaction(db, budgetId, outId));
 }
 
-// ---- Recurring schedules ----
+// ---- Planned items (recurring schedules) ----
+//
+// A planned item is a row in `recurring`. `next_date` is its next occurrence
+// that has not been entered or skipped; `remaining` counts the occurrences
+// still to go (NULL = no end). Occurrences are never stored: entering or
+// skipping one just moves the item forward.
 
-// Posts every schedule occurrence that is due on or before `today`, then moves
-// each schedule forward. Safe to run as often as you like.
-export function postDueRecurring(db, today = todayStr(), budgetId = null) {
-  const due = db.prepare('SELECT * FROM recurring WHERE next_date <= ? AND (? IS NULL OR budget_id = ?)').all(today, budgetId, budgetId);
+// Moves an item past its next occurrence. Returns the updated row, or null
+// when that was the last one (the item is then deleted).
+export function advancePlanned(db, r) {
+  const next = nextOccurrence(r.next_date, r.frequency, r.anchor_day);
+  const remaining = r.remaining === null ? null : r.remaining - 1;
+  if (remaining === 0 || (r.end_date && next > r.end_date)) {
+    db.prepare('DELETE FROM recurring WHERE id = ?').run(r.id);
+    return null;
+  }
+  db.prepare('UPDATE recurring SET next_date = ?, remaining = ? WHERE id = ?').run(next, remaining, r.id);
+  return { ...r, next_date: next, remaining };
+}
+
+// Creates the transaction for an item's next occurrence and moves it forward.
+// `changes` may adjust this one entry: { date, amount (signed cents), memo, cleared, flag_id }.
+export function enterPlanned(db, r, changes = {}, userId = null) {
+  const id = insertTransaction(db, {
+    budget_id: r.budget_id, account_id: r.account_id, category_id: r.category_id,
+    date: changes.date ?? r.next_date, amount: changes.amount ?? r.amount, payee: r.payee || r.name,
+    memo: changes.memo ?? r.memo, cleared: changes.cleared ? 1 : 0, flag_id: changes.flag_id ?? null,
+    recurring_id: r.id, created_by: userId,
+  });
+  return { id, after: advancePlanned(db, r) };
+}
+
+// Enters every occurrence that is due on or before `today`. By default only
+// items that enter themselves; with `manual` the ones that wait for the user
+// ("Enter all due"). Safe to run as often as you like.
+export function postDueRecurring(db, today = todayStr(), budgetId = null, { manual = false, userId = null } = {}) {
+  const due = db.prepare('SELECT * FROM recurring WHERE next_date <= ? AND auto = ? AND (? IS NULL OR budget_id = ?)')
+    .all(today, manual ? 0 : 1, budgetId, budgetId);
   let posted = 0;
   const run = db.transaction((r) => {
-    let next = r.next_date;
-    for (let guard = 0; next <= today && guard < 1000; guard++) {
-      if (r.end_date && next > r.end_date) break;
-      insertTransaction(db, {
-        budget_id: r.budget_id, account_id: r.account_id, category_id: r.category_id, date: next,
-        amount: r.amount, payee: r.payee, memo: r.memo, recurring_id: r.id,
-      });
+    let current = r;
+    for (let guard = 0; current && current.next_date <= today && guard < 1000; guard++) {
+      if (current.end_date && current.next_date > current.end_date) {
+        db.prepare('DELETE FROM recurring WHERE id = ?').run(current.id);
+        break;
+      }
+      current = enterPlanned(db, current, {}, userId).after;
       posted++;
-      next = nextOccurrence(next, r.frequency, r.anchor_day);
     }
-    if (r.end_date && next > r.end_date) db.prepare('DELETE FROM recurring WHERE id = ?').run(r.id);
-    else db.prepare('UPDATE recurring SET next_date = ? WHERE id = ?').run(next, r.id);
   });
   for (const r of due) run(r);
   return posted;

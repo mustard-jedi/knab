@@ -322,7 +322,8 @@ test('flags: add, use, filter, rename and remove', async () => {
   const { dad } = await setup();
   await dad('POST', '/accounts', { name: 'Checking', opening_balance: 100 });
   const flags = (await dad('GET', '/flags')).body;
-  assert.deepEqual(flags.map((f) => f.name), ['Red', 'Orange', 'Yellow', 'Green', 'Blue', 'Purple']);
+  assert.deepEqual(flags.map((f) => f.name), ['Red', 'Orange', 'Yellow', 'Green', 'Blue', 'Purple', 'To review']);
+  assert.deepEqual(flags.filter((f) => f.review).map((f) => f.name), ['To review']);
 
   const extra = await dad('POST', '/flags', { name: 'Reimburse', color: 'teal' });
   assert.equal(extra.status, 201);
@@ -347,7 +348,101 @@ test('flags: add, use, filter, rename and remove', async () => {
 
   assert.equal((await dad('DELETE', `/flags/${extra.body.id}`)).status, 200);
   assert.equal((await dad('GET', `/transactions`)).body.transactions.find((t) => t.id === tx.body.id).flag, null);
-  assert.equal((await dad('GET', '/flags')).body.length, 6);
+  assert.equal((await dad('GET', '/flags')).body.length, 7);
+
+  // A wrong category tells an agent what to do, naming the review flag.
+  const guess = await dad('POST', '/transactions', { amount: 5, type: 'expense', account: 'Checking', category: 'Coffee' });
+  assert.equal(guess.body.error, 'unknown_category');
+  assert.equal(guess.body.review_flag, 'To review');
+  assert.match(guess.body.hint, /closest in meaning, set "flag" to "To review"/);
+  assert.equal((await dad('POST', '/transactions', { amount: 5, type: 'expense', account: 'Checking' })).body.review_flag, 'To review');
+  // An unknown account gets no such hint: accounts are never guessed.
+  assert.equal((await dad('POST', '/transactions', { amount: 5, type: 'expense', account: 'Nope', category: 'Groceries' })).body.hint, undefined);
+
+  // The review mark moves to another flag, and only one flag has it.
+  const red = (await dad('GET', '/flags')).body.find((f) => f.name === 'Red');
+  assert.equal((await dad('PATCH', `/flags/${red.id}`, { review: true })).body.review, true);
+  assert.deepEqual((await dad('GET', '/flags')).body.filter((f) => f.review).map((f) => f.name), ['Red']);
+  assert.equal((await dad('POST', '/transactions', { amount: 5, type: 'expense', account: 'Checking', category: 'Coffee' })).body.review_flag, 'Red');
+  // With no review flag the hint falls back to the memo alone.
+  await dad('PATCH', `/flags/${red.id}`, { review: false });
+  const none = await dad('POST', '/transactions', { amount: 5, type: 'expense', account: 'Checking', category: 'Coffee' });
+  assert.equal(none.body.review_flag, undefined);
+  assert.match(none.body.hint, /start "memo" with "To review:"/);
+});
+
+test('planned items: installments wait, are entered or skipped, and drive the forecast', async () => {
+  const { dad } = await setup(); // cutoff day 23
+  const today = new Date();
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const plus = (days) => iso(new Date(today.getFullYear(), today.getMonth(), today.getDate() + days));
+  await dad('POST', '/accounts', { name: 'Checking', opening_balance: 1000 });
+  await dad('POST', '/accounts', { name: 'Visa', type: 'credit' });
+
+  // A 12-payment installment with 3 left, first due yesterday, that waits for the user.
+  const made = await dad('POST', '/recurring', {
+    name: 'Laptop', date: plus(-1), amount: 650, type: 'expense', account: 'Visa', category: 'Household',
+    frequency: 'monthly', auto: false, payments: 12, payments_left: 3, is_debt: true,
+  });
+  assert.equal(made.status, 201);
+  assert.equal(made.body.posted_now, 0); // overdue, but it waits
+  const laptop = made.body.schedule;
+  assert.deepEqual([laptop.kind, laptop.auto, laptop.payments, laptop.payments_left, laptop.left_to_pay, laptop.is_debt], ['installment', false, 12, 3, 1950, true]);
+  assert.equal((await dad('GET', '/accounts')).body.find((a) => a.name === 'Visa').balance, 0);
+
+  // An automatic bill dated yesterday enters itself; a one-off and salary are in the future.
+  const rent = await dad('POST', '/recurring', { name: 'Rent', date: plus(-1), amount: 300, type: 'expense', account: 'Checking', category: 'Rent / Mortgage', frequency: 'monthly' });
+  assert.equal(rent.body.posted_now, 1);
+  assert.equal(rent.body.schedule.kind, 'ongoing');
+  await dad('POST', '/recurring', { name: 'Insurance', date: plus(70), amount: 900, type: 'expense', account: 'Visa', category: 'Transport', frequency: 'monthly', auto: false, payments: 1 });
+  await dad('POST', '/recurring', { name: 'Salary', date: plus(5), amount: 2000, type: 'income', account: 'Checking', frequency: 'monthly' });
+  assert.equal((await dad('POST', '/recurring', { date: plus(5), amount: 1, type: 'income', account: 'Checking', frequency: 'monthly', payments: 2, payments_left: 5 })).body.error, 'invalid_payments');
+
+  const fc = (await dad('GET', '/forecast?periods=6')).body;
+  assert.equal(fc.periods.length, 6);
+  assert.equal(fc.summary.committed_debt, 1950);
+  assert.equal(fc.summary.debt_items, 1);
+  assert.equal(fc.summary.due_now, 1);
+  const all = fc.periods.flatMap((p) => p.occurrences);
+  const laptops = all.filter((o) => o.name === 'Laptop');
+  assert.deepEqual(laptops.map((o) => [o.number, o.of, o.actionable]), [[10, 12, true], [11, 12, false], [12, 12, false]]);
+  assert.equal(laptops[0].overdue, true);
+  assert.equal(fc.periods[0].occurrences[0].name, 'Laptop'); // overdue items show in the current period
+  assert.equal(all.filter((o) => o.name === 'Insurance').length, 1);
+  assert.equal(fc.periods.reduce((s, p) => s + p.installments, 0), 1950);
+  assert.equal(fc.periods.reduce((s, p) => s + p.one_offs, 0), 900);
+  assert.ok(fc.periods.reduce((s, p) => s + p.income, 0) >= 2000 * 5);
+  assert.ok(fc.periods.every((p) => Math.abs(p.total - (p.installments + p.bills + p.one_offs)) < 0.001));
+  assert.equal((await dad('GET', '/reports/trend?count=1')).body.committed_debt, 1950);
+
+  // Assigned amounts appear beside the plan.
+  await dad('PUT', '/budget/assign', { category: 'Household', period: fc.periods[1].label, amount: 500 });
+  assert.equal((await dad('GET', '/forecast?periods=2')).body.periods[1].assigned, 500);
+
+  // Entering the next payment, adjusted, creates the transaction and moves the item on.
+  const entered = (await dad('POST', `/recurring/${laptop.id}/enter`, { amount: 655.5, memo: 'with fee', flag: 'Red' })).body;
+  assert.deepEqual([entered.transaction.signed_amount, entered.transaction.account, entered.transaction.category, entered.transaction.payee, entered.transaction.memo, entered.transaction.flag],
+    [-655.5, 'Visa', 'Household', 'Laptop', 'with fee', 'Red']);
+  assert.equal(entered.transaction.date, plus(-1));
+  assert.deepEqual([entered.schedule.payments_left, entered.schedule.left_to_pay], [2, 1300]);
+  assert.equal((await dad('GET', '/accounts')).body.find((a) => a.name === 'Visa').balance, -655.5);
+  assert.equal((await dad('POST', '/recurring/enter-due')).body.entered, 0); // nothing else is due
+
+  // Fixing the count after the fact: it was really 4 left, not 2.
+  const fixed = (await dad('PATCH', `/recurring/${laptop.id}`, { payments_left: 4 })).body.schedule;
+  assert.deepEqual([fixed.payments, fixed.payments_left, fixed.left_to_pay], [12, 4, 2600]);
+  // Skipping uses one up without a transaction; the last one removes the item.
+  assert.equal((await dad('POST', `/recurring/${laptop.id}/skip`)).body.schedule.payments_left, 3);
+  await dad('PATCH', `/recurring/${laptop.id}`, { payments_left: 1, date: plus(-2) });
+  assert.equal((await dad('POST', '/recurring/enter-due')).body.entered, 1);
+  assert.equal((await dad('GET', '/recurring')).body.some((r) => r.name === 'Laptop'), false);
+  assert.equal((await dad('GET', '/forecast')).body.summary.committed_debt, 0);
+  assert.equal((await dad('GET', '/transactions?account=Visa')).body.total, 2);
+
+  // An ongoing item can be given an end, and an installment made open-ended again.
+  const rentId = rent.body.schedule.id;
+  assert.equal((await dad('PATCH', `/recurring/${rentId}`, { payments: 6 })).body.schedule.kind, 'installment');
+  assert.equal((await dad('PATCH', `/recurring/${rentId}`, { payments: 0 })).body.schedule.kind, 'ongoing');
 });
 
 test('reports and schema docs', async () => {

@@ -3,7 +3,7 @@ import {
   hashPassword, checkPassword, startSession, endSession,
   authenticate, requireSession, requireAdmin,
 } from '../auth.js';
-import { DEFAULT_FLAGS } from '../../shared/flags.js';
+import { DEFAULT_FLAGS, REVIEW_FLAG } from '../../shared/flags.js';
 import { importBudget } from '../portable.js';
 import { HttpError, sha256, newToken } from '../util.js';
 
@@ -204,7 +204,7 @@ export function systemRoutes(app) {
         });
       }
       DEFAULT_FLAGS.forEach(([flag, color], i) => db
-        .prepare('INSERT INTO flags (budget_id, name, color, sort) VALUES (?, ?, ?, ?)').run(budgetId, flag, color, i));
+        .prepare('INSERT INTO flags (budget_id, name, color, sort, review) VALUES (?, ?, ?, ?, ?)').run(budgetId, flag, color, i, flag === REVIEW_FLAG ? 1 : 0));
       return budgetId;
     })();
     reply.code(201);

@@ -7,17 +7,15 @@ import TransactionForm from './TransactionForm.jsx';
 import Budget from './pages/Budget.jsx';
 import Accounts, { AccountForm } from './pages/Accounts.jsx';
 import Transactions from './pages/Transactions.jsx';
-import Scheduled from './pages/Scheduled.jsx';
+import Forecast from './pages/Forecast.jsx';
 import Reports from './pages/Reports.jsx';
 import Settings from './pages/Settings.jsx';
 
 const NAV = [
   { to: '/', label: 'Budget', icon: 'budget', mobile: true },
   { to: '/accounts', label: 'Accounts', icon: 'accounts', mobile: true },
-  { to: '/transactions', label: 'Transactions', icon: 'list' },
-  { to: '/scheduled', label: 'Scheduled', icon: 'repeat' },
+  { to: '/forecast', label: 'Forecast', icon: 'forecast', mobile: true },
   { to: '/reports', label: 'Reports', icon: 'chart', mobile: true },
-  { to: '/settings', label: 'Settings', icon: 'settings', mobile: true },
 ];
 
 function Centered({ children }) {
@@ -163,6 +161,7 @@ function Shell() {
         <nav className="flex flex-col gap-0.5">
           <NavLink to="/" end className={({ isActive }) => sideLink(isActive)}><Icon name="budget" size={18} />Budget</NavLink>
           <NavLink to="/reports" className={({ isActive }) => sideLink(isActive)}><Icon name="chart" size={18} />Reports</NavLink>
+          <NavLink to="/forecast" className={({ isActive }) => sideLink(isActive)}><Icon name="forecast" size={18} />Forecast</NavLink>
           <Link to="/transactions" className={sideLink(onRegister && !activeAccount)}><Icon name="accounts" size={18} />All accounts</Link>
         </nav>
         <div className="flex flex-col gap-3">
@@ -174,20 +173,23 @@ function Shell() {
           </button>
         </div>
         <nav className="mt-auto flex flex-col gap-0.5 border-t border-white/10 pt-3">
-          <NavLink to="/scheduled" className={({ isActive }) => sideLink(isActive)}><Icon name="repeat" size={18} />Scheduled</NavLink>
           <NavLink to="/accounts" className={({ isActive }) => sideLink(isActive)}><Icon name="list" size={18} />Manage accounts</NavLink>
           <NavLink to="/settings" className={({ isActive }) => sideLink(isActive)}><Icon name="settings" size={18} />Settings</NavLink>
         </nav>
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 border-b border-line bg-surface px-4 py-2 md:hidden">{picker('input font-semibold')}</header>
+        <header className="sticky top-0 z-30 flex items-center gap-2 border-b border-line bg-surface py-2 pr-2 pl-4 md:hidden">
+          <div className="min-w-0 flex-1">{picker('input font-semibold')}</div>
+          <NavLink to="/settings" aria-label="Settings" className={({ isActive }) => `flex size-11 shrink-0 items-center justify-center rounded-lg ${isActive ? 'text-accent' : 'text-muted'}`}><Icon name="gear" size={22} /></NavLink>
+        </header>
         <main className="w-full flex-1 px-4 pt-4 pb-28 md:px-6 md:pt-6 md:pb-10">
           <Routes>
             <Route path="/" element={<Budget />} />
             <Route path="/accounts" element={<Accounts />} />
             <Route path="/transactions" element={<Transactions />} />
-            <Route path="/scheduled" element={<Scheduled />} />
+            <Route path="/forecast" element={<Forecast />} />
+            <Route path="/scheduled" element={<Navigate to="/forecast" replace />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" replace />} />

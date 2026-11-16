@@ -12,4 +12,6 @@ export const FLAG_COLORS = {
   gray: '#8a94a3',
 };
 
-export const DEFAULT_FLAGS = [['Red', 'red'], ['Orange', 'orange'], ['Yellow', 'yellow'], ['Green', 'green'], ['Blue', 'blue'], ['Purple', 'purple']];
+// The last entry is the review flag: see server/migrations/003_review_flag.sql.
+export const REVIEW_FLAG = 'To review';
+export const DEFAULT_FLAGS = [['Red', 'red'], ['Orange', 'orange'], ['Yellow', 'yellow'], ['Green', 'green'], ['Blue', 'blue'], ['Purple', 'purple'], [REVIEW_FLAG, 'teal']];

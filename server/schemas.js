@@ -108,20 +108,28 @@ const endDate = {
   description: 'Last date the schedule may post, in YYYY-MM-DD format. Optional. Send an empty string to remove it.',
 };
 
+const plannedFields = {
+  name: { type: 'string', maxLength: 80, description: 'What this is, for example "Laptop installment" or "Rent".' },
+  auto: { type: 'boolean', description: 'true (the default) enters each transaction by itself on its date. false keeps it in the forecast until someone enters it.' },
+  payments: { type: 'integer', minimum: 0, maximum: 600, description: 'How many payments there are in all: 12 for a 12-month installment, 1 for a one-off. Leave out, or send 0, for something with no end.' },
+  payments_left: { type: 'integer', minimum: 1, maximum: 600, description: 'How many payments are still to go. Defaults to "payments".' },
+  is_debt: { type: 'boolean', description: 'true if the remaining payments are a debt already owed (an installment already charged to a card).' },
+};
+
 export const recurringCreate = {
   title: 'RecurringCreate',
   description: 'Payload for POST /api/v1/recurring. "date" is the first occurrence; if it is today or earlier it is posted immediately.',
   type: 'object',
   additionalProperties: false,
   required: ['amount', 'type', 'account', 'frequency'],
-  properties: { ...txFields, frequency, end_date: endDate },
+  properties: { ...txFields, frequency, end_date: endDate, ...plannedFields },
 };
 
 export const recurringUpdate = {
   title: 'RecurringUpdate',
   type: 'object',
   additionalProperties: false,
-  properties: { ...txFields, frequency, end_date: endDate },
+  properties: { ...txFields, frequency, end_date: endDate, ...plannedFields },
 };
 
 export const errorResponse = {

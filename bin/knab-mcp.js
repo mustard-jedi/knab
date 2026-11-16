@@ -61,9 +61,9 @@ const TOOLS = [
   },
   {
     name: 'list_flags',
-    description: 'List the coloured flags that can be put on a transaction.',
+    description: 'List the coloured flags that can be put on a transaction. The one marked review_flag is for transactions whose category you had to guess.',
     inputSchema: object({}),
-    run: async (api) => (await api('GET', '/flags')).map(({ name, color, count }) => ({ name, color, transactions: count })),
+    run: async (api) => (await api('GET', '/flags')).map(({ name, color, count, review }) => ({ name, color, transactions: count, ...(review ? { review_flag: true } : {}) })),
   },
   {
     name: 'get_budget',
@@ -104,9 +104,35 @@ const TOOLS = [
     run: (api, a) => api('GET', `/reports/trend${query({ count: a.periods ?? 12 })}`),
   },
   {
+    name: 'get_forecast',
+    description: 'What is planned for the coming budget periods: installments, ongoing bills, one-off expenses and expected income, with totals per period, what is already assigned, the items that are overdue or due today, and the debt still committed in installments. Use it for "what is coming up", "how much do I still owe on installments" and "when does it ease".',
+    inputSchema: object({ periods: { type: 'integer', minimum: 1, maximum: 36, description: 'How many periods, starting with the current one. Defaults to 6.' } }),
+    run: (api, a) => api('GET', `/forecast${query({ periods: a.periods ?? 6 })}`),
+  },
+  {
+    name: 'add_planned_item',
+    write: true,
+    description: 'Plan a future expense or income in the forecast: an installment (set "payments", and "payments_left" if some are already paid), an ongoing bill or salary (leave "payments" out), or a one-off (payments 1). It does not create a transaction now; by default it waits until the user enters each payment.',
+    inputSchema: object({
+      name: str('What it is, for example "Laptop installment".'),
+      amount,
+      type: entryFields.type,
+      account: entryFields.account,
+      category: entryFields.category,
+      date: date('Date of the next payment'),
+      frequency: str('How often it repeats. Use "monthly" for a one-off.', { enum: ['weekly', 'biweekly', 'monthly', 'yearly'] }),
+      payments: { type: 'integer', minimum: 0, maximum: 600, description: 'Payments in all: 12 for a 12-month installment, 1 for a one-off. Leave out for something with no end.' },
+      payments_left: { type: 'integer', minimum: 1, maximum: 600, description: 'Payments still to go, if fewer than "payments".' },
+      is_debt: { type: 'boolean', description: 'true if the remaining payments are a debt already owed, such as an installment already charged to a card.' },
+      auto: { type: 'boolean', description: 'true enters each payment automatically on its date. Defaults to false: wait for the user.' },
+      memo: entryFields.memo,
+    }, ['name', 'amount', 'type', 'account', 'date', 'frequency']),
+    run: (api, a) => api('POST', '/recurring', { auto: false, ...a }),
+  },
+  {
     name: 'add_transaction',
     write: true,
-    description: 'Record one expense or income transaction. Amount is always positive; "type" says which way the money went. If a name is wrong the error lists the valid names.',
+    description: 'Record one expense or income transaction. Amount is always positive; "type" says which way the money went. If a name is wrong the error lists the valid names. For a wrong category: ask the user if you can; otherwise retry with the closest valid category, set the review flag named in the error, and start the memo with the original wording. Never guess an account.',
     inputSchema: object(entryFields, ['amount', 'type', 'account']),
     run: (api, a) => api('POST', '/transactions', a),
   },
@@ -173,7 +199,9 @@ const INSTRUCTIONS = 'Knab is a household envelope budget. Accounts, categories 
   + 'Amounts are always positive numbers; "type" (expense or income) gives the direction. '
   + 'Budget periods are labelled YYYY-MM after the month they start in and may not match calendar months. '
   + 'For questions about how Knab works, call read_manual instead of guessing. '
-  + 'Before writing, confirm anything the user did not state (which account, which category) rather than guessing.';
+  + 'Before writing, confirm anything the user did not state (which account, which category) rather than guessing. '
+  + 'If a category you were given does not exist and nobody can be asked, use the closest valid category, set the review flag (list_flags marks it), and start the memo with the wording you were given. '
+  + 'Never guess an account and never invent a category.';
 
 class ApiError extends Error {}
 
@@ -260,7 +288,7 @@ function httpApi() {
     const raw = await res.text();
     let data = raw;
     if ((res.headers.get('content-type') || '').includes('json')) { try { data = JSON.parse(raw); } catch { data = {}; } }
-    if (!res.ok) throw new ApiError(`Error (${data.error || res.status}): ${data.message || res.statusText}`);
+    if (!res.ok) throw new ApiError(`Error (${data.error || res.status}): ${data.message || res.statusText}${data.hint ? ` ${data.hint}` : ''}`);
     return data;
   };
 }

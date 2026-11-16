@@ -16,7 +16,7 @@ async function setup(options = {}) {
   const api = async (method, route, body) => {
     const res = await app.inject({ method, url: `/api/v1${route}`, payload: body, headers: { authorization: `Bearer ${token}` } });
     const data = res.headers['content-type'].includes('json') ? res.json() : res.body;
-    if (res.statusCode >= 400) throw new ApiError(`Error (${data.error}): ${data.message}`);
+    if (res.statusCode >= 400) throw new ApiError(`Error (${data.error}): ${data.message}${data.hint ? ` ${data.hint}` : ''}`);
     return data;
   };
   const handle = createMcpServer({ api, version: '1.2.3', ...options });
@@ -44,7 +44,7 @@ test('mcp: handshake, tool list and protocol errors', async () => {
   assert.deepEqual((await rpc('ping')).result, {});
 
   const { tools } = (await rpc('tools/list')).result;
-  assert.ok(tools.length >= 12);
+  assert.ok(tools.length >= 14);
   for (const t of tools) {
     assert.equal(t.inputSchema.type, 'object');
     assert.ok(t.description.length > 20);
@@ -72,6 +72,15 @@ test('mcp: tools read and write through the API', async () => {
   assert.equal(wrong.isError, true);
   assert.match(wrong.data, /unknown_account.*Valid accounts: Checking/);
 
+  // A category that does not exist: the reply lists the real ones and says how to
+  // guess safely, and the retry carries the review flag and the original wording.
+  const coffee = await tool('add_transaction', { amount: 4, type: 'expense', account: 'Checking', category: 'Coffee' });
+  assert.equal(coffee.isError, true);
+  assert.match(coffee.data, /Valid categories: .*Dining Out.*set "flag" to "To review"/);
+  assert.ok((await tool('list_flags', {})).data.find((f) => f.name === 'To review').review_flag);
+  const retry = await tool('add_transaction', { amount: 4, type: 'expense', account: 'Checking', category: 'Dining Out', flag: 'To review', memo: 'Coffee' });
+  assert.deepEqual([retry.data.category, retry.data.flag, retry.data.memo], ['Dining Out', 'To review', 'Coffee']);
+
   const listed = await tool('list_transactions', { search: 'market' });
   assert.equal(listed.data.total, 1);
   const updated = await tool('update_transaction', { id: added.data.id, cleared: true, memo: 'weekly shop' });
@@ -83,9 +92,14 @@ test('mcp: tools read and write through the API', async () => {
   assert.deepEqual([groceries.assigned, groceries.activity, groceries.available], [100, -42.5, 57.5]);
   assert.equal(budget.ready_to_assign, 400);
 
-  assert.equal((await tool('spending_report', {})).data.categories[0].total, 42.5);
+  assert.equal((await tool('spending_report', { category: 'Groceries' })).data.categories[0].total, 42.5);
   assert.equal((await tool('net_worth_report', { periods: 2 })).data.periods.length, 2);
   assert.ok((await tool('list_flags', {})).data.find((f) => f.name === 'Red').transactions === 1);
+
+  // Planning ahead: an installment added through MCP waits in the forecast.
+  const planned = await tool('add_planned_item', { name: 'Laptop', amount: 650, type: 'expense', account: 'Checking', category: 'Household', date: '2099-01-05', frequency: 'monthly', payments: 12, payments_left: 7, is_debt: true });
+  assert.deepEqual([planned.data.posted_now, planned.data.schedule.auto, planned.data.schedule.left_to_pay], [0, false, 4550]);
+  assert.equal((await tool('get_forecast', { periods: 2 })).data.summary.committed_debt, 4550);
 });
 
 test('mcp: the manual can be listed and searched', async () => {
@@ -105,7 +119,7 @@ test('mcp: the manual can be listed and searched', async () => {
 test('mcp: read-only mode leaves out every tool that changes data', async () => {
   const { rpc } = await setup({ readOnly: true });
   const { tools } = (await rpc('tools/list')).result;
-  assert.ok(tools.length >= 8);
+  assert.ok(tools.length >= 9);
   assert.ok(tools.every((t) => t.annotations.readOnlyHint));
   assert.equal((await rpc('tools/call', { name: 'add_transaction', arguments: { amount: 1, type: 'income', account: 'Checking' } })).error.code, -32602);
 });
